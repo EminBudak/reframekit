@@ -1,0 +1,23 @@
+{
+  "name": "reframekit",
+  "description": "reframekit: one finished video in the shape and within the limits of each place it goes to, with a crop that follows what moves.",
+  "owner": {
+    "name": "Emin Budak"
+  },
+  "plugins": [
+    {
+      "name": "reframekit",
+      "description": "Makes the 9:16, 4:5, 1:1 and 16:9 versions of a finished video for TikTok, Reels, Shorts, the feeds, YouTube, X and LinkedIn: a crop per shot that follows what moves, or the whole picture on a blurred copy where the action is too wide, each cut at a shot change to the place's length, kept under its file size limit and set to -14 LUFS, with crop.json and sheet.png to check and move the windows.",
+      "version": "0.1.0",
+      "source": "./",
+      "skills": ["./skills/reframekit"],
+      "author": {
+        "name": "Emin Budak"
+      },
+      "homepage": "https://github.com/EminBudak/reframekit",
+      "repository": "https://github.com/EminBudak/reframekit",
+      "license": "MIT",
+      "keywords": ["skills", "video", "reframe", "crop", "vertical-video", "loudness"]
+    }
+  ]
+}

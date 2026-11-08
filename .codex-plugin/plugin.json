@@ -1,0 +1,25 @@
+{
+  "name": "reframekit",
+  "version": "0.1.0",
+  "description": "Turn one finished video into the version each place takes: 9:16, 4:5, 1:1 and 16:9, with a crop that follows what moves in each shot, each cut at a shot change to the place's length, kept under its file size limit and set to -14 LUFS.",
+  "author": {
+    "name": "Emin Budak",
+    "url": "https://eminbudak.com"
+  },
+  "repository": "https://github.com/EminBudak/reframekit",
+  "license": "MIT",
+  "keywords": ["video", "reframe", "crop", "vertical-video", "loudness"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "reframekit",
+    "shortDescription": "One video in every shape each place takes",
+    "longDescription": "Makes the 9:16, 4:5, 1:1 and 16:9 versions of a finished video for TikTok, Reels, Shorts, the feeds, YouTube, X and LinkedIn. In each shot the crop follows what moves, or shows the whole picture on a blurred copy when the action is too wide for it. Each file is cut at a shot change to the place's length, kept under its file size limit and set to -14 LUFS, with a cover. crop.json and sheet.png show every window so it can be moved before rendering. Needs Node 22 or newer and ffmpeg 4.4 or newer, and no API key.",
+    "developerName": "Emin Budak",
+    "category": "Creativity",
+    "capabilities": ["Read", "Write"],
+    "websiteUrl": "https://github.com/EminBudak/reframekit",
+    "defaultPrompt": ["Make the TikTok, Reels and square versions of film.mp4"],
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/icon.svg"
+  }
+}
