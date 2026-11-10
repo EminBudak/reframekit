@@ -387,10 +387,12 @@ test("without ffmpeg it says how to get it", () => {
   assert.ok(!fs.existsSync(outDir("no-ffmpeg")));
 });
 
-test("an ffmpeg that lacks filters is named with them before any work, one made without --enable-gpl as such, not as one too old", { skip: process.platform === "win32" }, () => {
+test("an ffmpeg that lacks filters is named with them before any work, one made without --enable-gpl or with filters left out as such, not as one too old", { skip: process.platform === "win32" }, () => {
   // The system's ffmpeg, listing its filters without some of them: as a
   // build made without --enable-gpl lists them (no cropdetect, no eq), as
-  // one older than 4.3 does (no scdet), and as both at once.
+  // one older than 4.3 does (no scdet), as both at once, and as one made
+  // with some filters left out does, here bwdif, which only an interlaced
+  // picture takes, and volume.
   const bin = outDir("filters-bin");
   fs.mkdirSync(bin, { recursive: true });
   const real = spawnSync("sh", ["-c", "command -v ffmpeg"], { encoding: "utf8" }).stdout.trim();
@@ -399,6 +401,7 @@ test("an ffmpeg that lacks filters is named with them before any work, one made 
     eq: "This ffmpeg lacks the eq filter, which comes only in a build made with --enable-gpl, as Ubuntu's is. Install such a build of ffmpeg (4.4 or later) or point FFMPEG_PATH at one.",
     scdet: "This ffmpeg lacks the scdet filter. Install a newer build of ffmpeg (4.4 or later) or point FFMPEG_PATH at one.",
     "scdet|eq": "This ffmpeg lacks the scdet, eq filters. Install a newer build of ffmpeg (4.4 or later), made with --enable-gpl, or point FFMPEG_PATH at one.",
+    "bwdif|volume": "This ffmpeg lacks the bwdif, volume filters. Install a full build of ffmpeg (4.4 or later) or point FFMPEG_PATH at one.",
   };
   for (const [hidden, words] of Object.entries(said)) {
     const name = hidden.replace("|", "-");
