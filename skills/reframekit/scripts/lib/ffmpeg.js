@@ -53,10 +53,13 @@ function debug(tool, args) {
 }
 
 // The filters a run needs. All are built into ffmpeg (no external
-// library), Homebrew's default build included. scdet came in ffmpeg 4.4,
-// so an older ffmpeg stops here; 4.4 is Ubuntu 22.04's, and the oldest
-// the kit is tested on.
+// library), Homebrew's default build included, but cropdetect and eq only
+// into a build made with --enable-gpl, as Ubuntu's is: FFmpeg's configure
+// gives each of them gpl as what it depends on. scdet came in ffmpeg 4.3,
+// so an older ffmpeg stops here; the version itself is not checked. 4.4
+// is Ubuntu 22.04's, and the oldest the kit is tested on.
 const FILTERS = ["scdet", "cropdetect", "metadata", "sendcmd", "crop", "scale", "color", "overlay", "gblur", "eq", "fps", "tpad", "trim", "split", "setsar", "setparams", "loudnorm", "ebur128", "aresample", "aformat", "afade", "atrim"];
+const GPL_ONLY = new Set(["cropdetect", "eq"]);
 
 let checked = null;
 
@@ -147,7 +150,14 @@ function checkTools() {
   }
   const listed = new Set(ask(ffmpegPath(), ["-hide_banner", "-filters"], "when asked to list its filters").split("\n").map((line) => (/^\s*[A-Z.|]{2,3}\s+(\S+)\s/.exec(line) || [])[1]).filter(Boolean));
   const absent = FILTERS.filter((name) => !listed.has(name));
-  if (absent.length) throw new Error(`This ffmpeg lacks the ${absent.join(", ")} filter${absent.length > 1 ? "s" : ""}. Install a newer build of ffmpeg (4.4 or later) or point FFMPEG_PATH at one.`);
+  if (absent.length) {
+    const lacks = `This ffmpeg lacks the ${absent.join(", ")} filter${absent.length > 1 ? "s" : ""}`;
+    // A build made without --enable-gpl, which a newer one of the same
+    // kind would not mend.
+    if (absent.every((name) => GPL_ONLY.has(name))) throw new Error(`${lacks}, which ${absent.length > 1 ? "come" : "comes"} only in a build made with --enable-gpl, as Ubuntu's is. Install such a build of ffmpeg (4.4 or later) or point FFMPEG_PATH at one.`);
+    const gpl = absent.some((name) => GPL_ONLY.has(name));
+    throw new Error(`${lacks}. Install a newer build of ffmpeg (4.4 or later)${gpl ? ", made with --enable-gpl," : ""} or point FFMPEG_PATH at one.`);
+  }
   const version = /ffmpeg version (\S+)/.exec(said);
   checked = { ffmpeg: ffmpegPath(), ffprobe: ffprobePath(), version: version ? version[1] : "unknown" };
   return checked;

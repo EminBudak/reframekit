@@ -387,6 +387,35 @@ test("without ffmpeg it says how to get it", () => {
   assert.ok(!fs.existsSync(outDir("no-ffmpeg")));
 });
 
+test("an ffmpeg that lacks filters is named with them before any work, one made without --enable-gpl as such, not as one too old", { skip: process.platform === "win32" }, () => {
+  // The system's ffmpeg, listing its filters without some of them: as a
+  // build made without --enable-gpl lists them (no cropdetect, no eq), as
+  // one older than 4.3 does (no scdet), and as both at once.
+  const bin = outDir("filters-bin");
+  fs.mkdirSync(bin, { recursive: true });
+  const real = spawnSync("sh", ["-c", "command -v ffmpeg"], { encoding: "utf8" }).stdout.trim();
+  const said = {
+    "cropdetect|eq": "This ffmpeg lacks the cropdetect, eq filters, which come only in a build made with --enable-gpl, as Ubuntu's is. Install such a build of ffmpeg (4.4 or later) or point FFMPEG_PATH at one.",
+    eq: "This ffmpeg lacks the eq filter, which comes only in a build made with --enable-gpl, as Ubuntu's is. Install such a build of ffmpeg (4.4 or later) or point FFMPEG_PATH at one.",
+    scdet: "This ffmpeg lacks the scdet filter. Install a newer build of ffmpeg (4.4 or later) or point FFMPEG_PATH at one.",
+    "scdet|eq": "This ffmpeg lacks the scdet, eq filters. Install a newer build of ffmpeg (4.4 or later), made with --enable-gpl, or point FFMPEG_PATH at one.",
+  };
+  for (const [hidden, words] of Object.entries(said)) {
+    const name = hidden.replace("|", "-");
+    const fake = path.join(bin, name);
+    fs.writeFileSync(fake, `#!/bin/sh\ncase "$*" in *-filters*) "${real}" "$@" | grep -v -E '^ *[A-Z.|]{2,3} +(${hidden}) '; exit 0;; esac\nexec "${real}" "$@"\n`);
+    fs.chmodSync(fake, 0o755);
+    const env = { ...process.env, FFMPEG_PATH: fake };
+    for (const args of [[fixture("twoShots"), "--for", "180x320", "--plan"], ["check", fixture("twoShots")]]) {
+      const out = outDir(`filters-${name}-${args[0] === "check" ? "check" : "plan"}`);
+      const r = cli([...args, "--out", out], { env });
+      assert.equal(r.status, 1, `${name}: ${r.stderr}`);
+      assert.equal(r.stderr, `reframekit: ${words}\n`, name);
+      assert.ok(!fs.existsSync(out), name);
+    }
+  }
+});
+
 test("an ffmpeg or an ffprobe that does not answer is named with why it did not, and only one that is not there is to be installed", { skip: process.platform === "win32" }, () => {
   const { unanswered, MISSING } = require("../skills/reframekit/scripts/lib/ffmpeg");
   // One too slow to answer, as on a machine too busy, which spawnSync ends.
