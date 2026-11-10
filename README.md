@@ -14,6 +14,15 @@ The crop follows motion, not faces. Nothing in it recognizes people or objects, 
 
 The clip can come from any video model, and [Wiro](https://wiro.ai/explore/image-to-video) has several.
 
+## Requirements
+
+- Node.js 22 or newer.
+- ffmpeg and ffprobe 4.4 or newer, Ubuntu 22.04's 4.4.2 included. ffmpeg has to be a build made with `--enable-gpl`, as Ubuntu's is: cropdetect and eq, two of the filters it uses, come only in such a build, as libx264 does. To render the files, ffmpeg needs an H.264 encoder: libx264, the one every test has used, or VideoToolbox, OpenH264 or Media Foundation, which no test has run with; a plan and a check need none. The other filters it uses are ffmpeg's own, and so is the AAC encoder. `brew install ffmpeg` and `winget install ffmpeg` give a new enough one, and so does `sudo apt install ffmpeg` on Ubuntu 22.04, Debian 12 or newer. Set `FFMPEG_PATH` to use another build, as a path or a name on your PATH; given as a path, it also picks the ffprobe next to that ffmpeg. Set `FFPROBE_PATH` for an ffprobe other than that one or the `ffprobe` on your PATH. `LAUNCH_FILM_FFMPEG` and `LAUNCH_FILM_FFPROBE`, as launch-film reads them, work too. Before any work, a run checks that ffmpeg has the filters it uses, and a render that it has an H.264 and an AAC encoder, and says what is missing. It does not check ffmpeg's version, so an ffmpeg older than 4.4 that has them goes ahead, though no test has run on one.
+- Linux, where it is tested: on Ubuntu 22.04 with its ffmpeg 4.4.2 and on GitHub's ubuntu-latest runner (Ubuntu 24.04 with ffmpeg 6.1 at this release), on every push and before every release. This release has also run on Ubuntu 26.04 with ffmpeg 8.0. It is written for macOS and Windows as well, but it has not been run on either.
+- Room on the disk for the files of a run and those of the run before it, as the earlier files stay until the new ones are in place. Until a run ends, it also keeps a copy of an MPEG-TS or MPEG-PS (.ts, .mts, .m2ts, .mpg, .vob), about as large as the video, in its hidden folder in the out folder. A file encoded again in two passes, as one over its place's size limit is, also takes x264's notes on the first pass until it is done, about 26 MB a minute of a 1080x1920 file at 30 fps.
+- Memory for ffmpeg, more for a video of more pixels, for a 10-bit one, as a phone's HDR video is, and on a machine with more cores. From a 1920x1080 video, ffmpeg took about 0.6 GB on 2 cores and 1.5 GB on 24 to render a 1080x1920 file, as much for a minute of video as for six seconds, and from a 10-bit one about 0.65 GB and 1.6 GB. From a 3840x2160 video it took 0.8 to 1.1 GB on 2 cores and 1.9 to 2.5 GB on 24, and from a 10-bit one 1.2 to 1.5 GB and 3 to 3.6 GB. At that size a plan alone can take as much, as it reads four frames of the video at once for sheet.png. Node's part grows with the length of the video: planning a one hour video took about 250 MB (see [Limits](#limits)).
+- A run needs no network access, no browser and no API key: reframekit reads files on your disk, and nothing leaves your machine. Installing it needs the network, and `npx reframekit@latest` asks npm for the newest version each time it runs. There are no npm dependencies: ffmpeg reads and writes the video, and the rest is plain JavaScript.
+
 ## What you get
 
 ```
@@ -159,9 +168,9 @@ npx reframekit@latest talk.mp4 --for feed --mode pad --brand easybrandkit-acme.c
 npx reframekit@latest check reframekit-film --captions captions.ass
 ```
 
-Installed globally (`npm install -g reframekit`), the command is `reframekit`. npx keeps the copy an earlier run fetched, so `npx reframekit@latest` is how you get a newer version.
+Installed globally (`npm install -g reframekit`), the command is `reframekit`. npx keeps the copy an earlier run fetched, so `npx reframekit@latest` is how you get a newer version. What a run needs is under [Requirements](#requirements).
 
-It needs Node 22 or newer and ffmpeg 4.4 or newer (`brew install ffmpeg`, `sudo apt install ffmpeg` or `winget install ffmpeg`). Set `FFMPEG_PATH` and `FFPROBE_PATH` to pick them (`LAUNCH_FILM_FFMPEG` and `LAUNCH_FILM_FFPROBE`, as launch-film reads them, work too), and `REFRAMEKIT_DEBUG=1` to see each ffmpeg and ffprobe command as it starts and the numbers behind every window. There are no npm dependencies, and nothing leaves your machine.
+Set `REFRAMEKIT_DEBUG=1` to see each ffmpeg and ffprobe command as it starts and the numbers behind every window.
 
 ## Move a window
 
