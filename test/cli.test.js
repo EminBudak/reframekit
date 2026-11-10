@@ -419,6 +419,40 @@ test("an ffmpeg that lacks filters is named with them before any work, one made 
   }
 });
 
+test("an ffmpeg with no H.264 encoder a render can use, or with no AAC encoder, stops a render before any work with what it lacks, while a plan and a check, which encode nothing, go ahead", { skip: process.platform === "win32" }, () => {
+  // The system's ffmpeg, listing its encoders without the four H.264 ones
+  // a render takes (libx264rgb, which it does not take, is left in), or
+  // without ffmpeg's own AAC encoder.
+  const bin = outDir("encoders-bin");
+  fs.mkdirSync(bin, { recursive: true });
+  const real = spawnSync("sh", ["-c", "command -v ffmpeg"], { encoding: "utf8" }).stdout.trim();
+  const said = {
+    "no-h264": ["libx264|h264_videotoolbox|libopenh264|h264_mf", "This ffmpeg has no H.264 encoder (x264, VideoToolbox, OpenH264 or Media Foundation). Install a full build of ffmpeg."],
+    "no-aac": ["aac", "This ffmpeg has no AAC encoder. Install a full build of ffmpeg."],
+  };
+  for (const [name, [hidden, words]] of Object.entries(said)) {
+    const fake = path.join(bin, name);
+    fs.writeFileSync(fake, `#!/bin/sh\ncase "$*" in *-encoders*) "${real}" "$@" | grep -v -E '^ *[A-Z.]+ +(${hidden}) '; exit 0;; esac\nexec "${real}" "$@"\n`);
+    fs.chmodSync(fake, 0o755);
+    const env = { ...process.env, FFMPEG_PATH: fake };
+    const listed = spawnSync(fake, ["-hide_banner", "-encoders"], { encoding: "utf8" }).stdout;
+    assert.doesNotMatch(listed, new RegExp(`^ *[A-Z.]+ +(${hidden}) `, "m"), name);
+    assert.match(listed, name === "no-aac" ? /^ *V\S* +libx264 /m : /^ *A\S* +aac /m, name);
+    const render = outDir(`encoders-${name}-render`);
+    const r = cli([fixture("twoShots"), "--for", "180x320", "--out", render], { env });
+    assert.equal(r.status, 1, `${name}: ${r.stderr}`);
+    assert.equal(r.stderr, `reframekit: ${words}\n`, name);
+    assert.ok(!fs.existsSync(render), name);
+    const plan = outDir(`encoders-${name}-plan`);
+    const planned = cli([fixture("twoShots"), "--for", "180x320", "--plan", "--out", plan], { env });
+    assert.equal(planned.status, 0, `${name}: ${planned.stderr}`);
+    assert.ok(fs.existsSync(path.join(plan, "crop.json")), name);
+    const checked = cli(["check", fixture("twoShots"), "--for", "youtube", "--out", outDir(`encoders-${name}-check`)], { env });
+    assert.equal(checked.status, 0, `${name}: ${checked.stderr}`);
+    assert.ok(fs.existsSync(path.join(outDir(`encoders-${name}-check`), "check.json")), name);
+  }
+});
+
 test("an ffmpeg or an ffprobe that does not answer is named with why it did not, and only one that is not there is to be installed", { skip: process.platform === "win32" }, () => {
   const { unanswered, MISSING } = require("../skills/reframekit/scripts/lib/ffmpeg");
   // One too slow to answer, as on a machine too busy, which spawnSync ends.
