@@ -1,6 +1,6 @@
 {
   "name": "reframekit",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Turn one finished video into the version each place takes: 9:16 for TikTok, Reels and Shorts, 4:5 for the feeds, 1:1 and 16:9, with a crop that follows what moves in each shot, each cut at a shot change to the place's length, kept under its file size limit and set to -14 LUFS.",
   "license": "MIT",
   "author": "Emin Budak",
