@@ -832,6 +832,57 @@ test("an ffmpeg or an ffprobe that gives no answer when asked its version is sto
   assert.ok(Date.now() - began < 20000, `${Date.now() - began} ms`);
 });
 
+test("an entry of PATH on a network mount the system cannot reach, as one whose handle went stale, is passed over as glibc passes over it, and an ffmpeg a variable names there is said to be so in the system's words", { skip: process.platform !== "linux" ? "the stand-in gives Linux's error numbers" : false }, () => {
+  // A preload that plays such a mount: every look at a name in STALE_DIR
+  // fails as the kernel's stale file handle does, which Node.js has no
+  // name for (errno -116), and every start of a file in SLOW_DIR fails at
+  // once with ETIMEDOUT, as on a mount that does not answer, with no
+  // process made.
+  const preload = path.join(dir, "network-mount.js");
+  fs.writeFileSync(preload, `"use strict";
+const fs = require("node:fs");
+const cp = require("node:child_process");
+const stat = fs.statSync;
+fs.statSync = function (file, ...rest) {
+  if (String(file).startsWith(process.env.STALE_DIR + "/")) throw Object.assign(new Error("UNKNOWN: unknown error, stat '" + file + "'"), { code: "UNKNOWN", errno: -116, syscall: "stat", path: String(file) });
+  return stat.call(this, file, ...rest);
+};
+const spawnSync = cp.spawnSync;
+cp.spawnSync = function (file, args, ...rest) {
+  if (String(file).startsWith(process.env.SLOW_DIR + "/")) return { error: Object.assign(new Error("spawnSync " + file + " ETIMEDOUT"), { code: "ETIMEDOUT", errno: -110, syscall: "spawnSync " + file, path: file }), status: null, signal: null, output: null, pid: 0 };
+  return spawnSync.call(this, file, args, ...rest);
+};
+`);
+  const root = outDir("network-mount");
+  const stale = path.join(root, "stale");
+  const slow = path.join(root, "slow");
+  const probeOnly = path.join(root, "probe-only");
+  for (const folder of [stale, slow, probeOnly]) fs.mkdirSync(folder, { recursive: true });
+  fs.symlinkSync(realTool("ffmpeg"), path.join(slow, "ffmpeg"));
+  fs.symlinkSync(realTool("ffprobe"), path.join(probeOnly, "ffprobe"));
+  const { FFMPEG_PATH, FFPROBE_PATH, LAUNCH_FILM_FFMPEG, LAUNCH_FILM_FFPROBE, PATH, ...rest } = process.env;
+  const tools = `${path.dirname(realTool("ffmpeg"))}:${path.dirname(realTool("ffprobe"))}`;
+  const run = (name, env) => {
+    const out = outDir(`network-mount-${name}`);
+    const r = spawnSync(process.execPath, ["--require", preload, CLI, fixture("twoShots"), "--for", "180x320", "--plan", "--out", out], { encoding: "utf8", env: { ...rest, STALE_DIR: stale, SLOW_DIR: slow, ...env } });
+    return { ...r, made: fs.existsSync(out) };
+  };
+  // Passed over, ahead of a working ffmpeg and ffprobe.
+  for (const [name, first] of [["stale", stale], ["slow", slow]]) {
+    const r = run(`${name}-first`, { PATH: `${first}:${tools}` });
+    assert.equal(r.status, 0, `${name}: ${r.stderr}`);
+  }
+  // Named when no ffmpeg comes after it, or when a variable names it.
+  const named = run("slow-named", { PATH: `${slow}:${probeOnly}` });
+  assert.equal(named.status, 1, named.stderr);
+  assert.equal(named.stderr, `reframekit: ${onPathIs("ffmpeg", path.join(slow, "ffmpeg"), "did not run as ffmpeg: the system could not start it: connection timed out")}\n`);
+  assert.ok(!named.made);
+  const given = run("stale-named", { PATH, FFMPEG_PATH: path.join(stale, "ffmpeg"), FFPROBE_PATH: realTool("ffprobe") });
+  assert.equal(given.status, 1, given.stderr);
+  assert.equal(given.stderr, `reframekit: ${pointsTo("FFMPEG_PATH", path.join(stale, "ffmpeg"), "cannot be looked at: stale file handle")}\n`);
+  assert.ok(!given.made);
+});
+
 test("a line a program printed is quoted as it is, its control characters written out, and a long one keeps its start and its end", () => {
   const { quoted } = require("../skills/reframekit/scripts/lib/tools");
   assert.equal(quoted("#!/bin/sh\r"), '"#!/bin/sh\\r"');

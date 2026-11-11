@@ -191,9 +191,31 @@ function noexecMount(file) {
   return found && found.noexec ? found.point : null;
 }
 
+// The errors the system gives that Node.js has no name for, and calls
+// "Unknown system error -116": each one's name and the system's words, by
+// system and number. Linux's numbers are those of every processor Node.js
+// runs on but MIPS.
+const UNNAMED = {
+  linux: { 80: ["ELIBBAD", "accessing a corrupted shared library"], 116: ["ESTALE", "stale file handle"] },
+  darwin: { 70: ["ESTALE", "stale NFS file handle"], 85: ["EBADEXEC", "bad executable (or shared library)"], 86: ["EBADARCH", "bad CPU type in executable"], 87: ["ESHLIBVERS", "shared library version mismatch"], 88: ["EBADMACHO", "malformed Mach-o file"] },
+};
+
+// An error's name and the system's words for it, as ["EACCES",
+// "permission denied"], or [] when neither is known.
+const known = (err) => getSystemErrorMap().get(err.errno) || (!/^mips/.test(process.arch) && (UNNAMED[process.platform] || {})[-err.errno]) || [];
+
+// The system's name for an error, as ESTALE, else Node's.
+const codeOf = (err) => known(err)[0] || err.code;
+
 // The system's own words for an error, such as "permission denied", else
 // its code.
-const worded = (err) => (getSystemErrorMap().get(err.errno) || [])[1] || err.code;
+const worded = (err) => known(err)[1] || err.code;
+
+// The errors looking at a place can give that the system passes over, as
+// it passes over a place where nothing is, when it looks for a program on
+// PATH as glibc does: a folder of PATH on a network mount whose handle
+// went stale, or that does not answer.
+const UNREACHED = new Set(["ESTALE", "ENODEV", "ETIMEDOUT"]);
 
 // What keeps the system from starting the file at `file`, as far as can
 // be told for certain before it runs: null when nothing does, else the
@@ -201,14 +223,16 @@ const worded = (err) => (getSystemErrorMap().get(err.errno) || [])[1] || err.cod
 // system does with such a place when it looks for a program on PATH: it
 // passes over a folder, a file this user may not run and a link that
 // leads nowhere ("passes"), and looks on; it passes over a place where
-// nothing is, or one in a folder this user may not enter, "quietly", as
-// such a place may hold no such program at all; and it stops at a place
-// it cannot follow, as a loop of links ("stops").
+// nothing is, one in a folder this user may not enter and one on a mount
+// it cannot reach "quietly", as such a place may hold no such program at
+// all; and it stops at a place it cannot follow, as a loop of links
+// ("stops").
 function barred(file) {
   let stat;
   try {
     stat = fs.statSync(file);
   } catch (err) {
+    if (UNREACHED.has(codeOf(err))) return { on: "quietly", words: `cannot be looked at: ${worded(err)}` };
     const own = lstatOf(file);
     const link = Boolean(own && own.isSymbolicLink());
     if (err.code === "ENOENT" || err.code === "ENOTDIR") {
@@ -292,19 +316,21 @@ const SHORT = {
 };
 
 // The errors a start fails with that the system passes over to try the
-// next entry of PATH: a file it may not run, or one whose interpreter or
-// loader is not there or may not be run.
-const PASSED = new Set(["ENOENT", "EACCES", "ENOTDIR", "ESTALE", "ENODEV"]);
+// next entry of PATH, as glibc's execvp does: a file it may not run, one
+// whose interpreter or loader is not there or may not be run, and one on
+// a network mount it cannot reach (UNREACHED).
+const PASSED = new Set(["ENOENT", "EACCES", "ENOTDIR", ...UNREACHED]);
 
 // What happened to a file the system did not start (`err`), once the
 // checks above found nothing wrong with the file itself. The system says
 // ENOENT of a file that is there when an interpreter or a loader it needs
 // is not, so a script's first line, which names its interpreter, is shown.
 function unstartable(file, err) {
-  if (["ENOEXEC", "EFTYPE", "EBADARCH"].includes(err.code)) return "it is not a program this system can run";
+  const code = codeOf(err);
+  if (["ENOEXEC", "EFTYPE", "EBADARCH", "EBADMACHO"].includes(code)) return "it is not a program this system can run";
   const line = bangLine(file);
   const first = line === null ? "" : `; its first line is ${quoted(line)}`;
-  if (err.code === "ENOENT") return `the system could not start it, as an interpreter or a loader it needs is not there${first}`;
+  if (code === "ENOENT") return `the system could not start it, as an interpreter or a loader it needs is not there${first}`;
   return `the system could not start it: ${worded(err)}${first}`;
 }
 
@@ -372,7 +398,7 @@ function nowhere(source, quiet, locked) {
 
 // The error for a tool the system could not start for want of what it
 // takes to start a program, which names no file and no install.
-const short = (tool, err) => unusable(`reframekit could not start ${tool}, as ${SHORT[err.code]}`);
+const short = (tool, err) => unusable(`reframekit could not start ${tool}, as ${SHORT[codeOf(err)]}`);
 
 // The error for a tool at `file` that gave no answer in `limit` ms when
 // asked its version. A working ffmpeg can be that slow on a machine too
@@ -404,14 +430,15 @@ function find(source, show = () => {}, limit = ASK) {
     if (!seen) {
       show(place.file, ARGS);
       const r = spawnSync(place.file, ARGS, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: limit, killSignal: "SIGKILL", maxBuffer: MAX, windowsHide: true });
-      // An error with no process is the system's, at the start; one with
-      // a process came after it started: the time limit, or the most of
+      // An error with no process is the system's, at the start, as one
+      // that fails at once with ETIMEDOUT on a network mount; one with a
+      // process came after it started: the time limit, or the most of
       // its output that is taken in.
       const err = r.error && !r.pid ? r.error : null;
-      if (err && Object.hasOwn(SHORT, err.code)) throw short(tool, err);
+      if (err && Object.hasOwn(SHORT, codeOf(err))) throw short(tool, err);
       if (!err && r.error && r.error.code === "ETIMEDOUT") throw late(tool, place.file, limit);
       if (!r.error && r.status === 0 && new RegExp(`^${tool} version `, "m").test(r.stdout)) return { file: place.file, source, said: String(r.stdout) };
-      seen = { on: err && PASSED.has(err.code) ? "passes" : "stops", words: `did not run as ${tool}: ${err ? unstartable(place.file, err) : answered(r)}`, signal: r.error ? null : r.signal };
+      seen = { on: err && PASSED.has(codeOf(err)) ? "passes" : "stops", words: `did not run as ${tool}: ${err ? unstartable(place.file, err) : answered(r)}`, signal: r.error ? null : r.signal };
     } else if (seen.folder && source.variable && isPath(source.program)) {
       // A folder that holds the tool, as a static build's folder does.
       const inner = path.join(place.file, windows ? `${tool}.exe` : tool);
@@ -433,7 +460,7 @@ function find(source, show = () => {}, limit = ASK) {
 // work (`before`): short of what it takes to start one, or in the
 // system's own words.
 function again(tool, file, err, before = true) {
-  if (Object.hasOwn(SHORT, err.code)) return short(tool, err);
+  if (Object.hasOwn(SHORT, codeOf(err))) return short(tool, err);
   return unusable(`reframekit could not start ${tool}, ${file}${before ? ", again" : ""}: ${worded(err)}.`);
 }
 
