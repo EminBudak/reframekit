@@ -587,6 +587,15 @@ test("a moment of the sheet where ffmpeg decodes no frame, as in a damaged end o
   assert.equal(plain.stdout.length, 0);
 });
 
+test("each frame of the sheet is decoded with two threads, not with one more than the cores ffmpeg counts, which took half a GB more for each frame of a 10-bit 3840x2160 video with ffmpeg 4.4.2", () => {
+  const out = outDir("grab-threads");
+  const r = cli([fixture("twoShots"), "--for", "180x320", "--plan", "--out", out], { env: { ...process.env, REFRAMEKIT_DEBUG: "1" } });
+  assert.equal(r.status, 0, r.stderr);
+  const grabs = r.stderr.split("\n").filter((line) => / -frames:v 1 .*rawvideo pipe:1$/.test(line));
+  assert.equal(grabs.length, 6, r.stderr);
+  for (const line of grabs) assert.match(line, / -threads 2 (?:(?! -i ).)* -i /, line);
+});
+
 test("an MPEG-PS whose sound an MP4 cannot hold as it is, as a DVD's PCM, renders with that sound on its frame, and formats.json names the sound's own codec", () => {
   // A DVD's VOB: MPEG-2 picture and PCM sound, the flash and the click at
   // 1 s. Its copy holds the sound as ALAC.

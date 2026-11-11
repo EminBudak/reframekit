@@ -26,14 +26,17 @@ const INK = { ground: "#111114", text: "#f4f1ea", dim: "#8b8a93", panel: "#1c1c2
 // file. By itself ffmpeg fails a run when more than two thirds of the
 // frames it decoded failed (exit code 69), as a grab there can, though
 // the video as a whole reads well enough; -max_error_rate 1 keeps it
-// from failing for that alone. A grab that fails otherwise, or that a
-// signal ends, as when the system kills it as memory runs out, fails
-// with how ffmpeg ended (ffmpeg.js mustRun()), never taken for a moment
-// with no picture.
+// from failing for that alone. It decodes with two threads: by itself
+// ffmpeg takes one more than the cores it counts, up to 16, each with
+// frames of its own, and ffmpeg 4.4.2 counts every core of the machine,
+// so a grab of a 10-bit 3840x2160 video took 0.75 GB there, and 0.26 GB
+// with two threads. A grab that fails otherwise, or that a signal ends,
+// as when the system kills it as memory runs out, fails with how ffmpeg
+// ended (ffmpeg.js mustRun()), never taken for a moment with no picture.
 async function frameAt(info, t, w, h, work) {
   const at = Math.max(0, t);
   const seek = Math.max(0, Math.floor((at + (Number.isFinite(info.origin) ? info.origin : 0) - (info.startTime || 0)) * 1000) / 1000);
-  const r = await mustRun(["-v", "error", "-max_error_rate", "1", "-noaccurate_seek", "-ss", seek.toFixed(3), ...openVideo(info), "-map", `0:${info.video.index}`, "-frames:v", "1", "-vf", `setpts=PTS-${fromOrigin(info)}/TB,trim=start=${at.toFixed(4)},scale=${w}:${h}:flags=area,format=rgb24`, "-f", "rawvideo", "pipe:1"], `Taking the frame at ${at.toFixed(2)} s for sheet.png`, { cwd: work, collect: true });
+  const r = await mustRun(["-v", "error", "-max_error_rate", "1", "-threads", "2", "-noaccurate_seek", "-ss", seek.toFixed(3), ...openVideo(info), "-map", `0:${info.video.index}`, "-frames:v", "1", "-vf", `setpts=PTS-${fromOrigin(info)}/TB,trim=start=${at.toFixed(4)},scale=${w}:${h}:flags=area,format=rgb24`, "-f", "rawvideo", "pipe:1"], `Taking the frame at ${at.toFixed(2)} s for sheet.png`, { cwd: work, collect: true });
   return r.stdout && r.stdout.length >= w * h * 3 ? r.stdout.subarray(0, w * h * 3) : null;
 }
 
