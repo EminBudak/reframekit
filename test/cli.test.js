@@ -661,6 +661,11 @@ test("an ffmpeg or an ffprobe that cannot be started, or that does not answer as
     // and a line, then blank ones.
     const blank = put("blank", tool, '#!/bin/sh\nyes "" | head -c 3000000\n');
     const flood = put("flood", tool, '#!/bin/sh\necho "first words"\nyes "" | head -c 3000000\n');
+    // A program for Windows, which the system gives to /bin/sh to read, or,
+    // where a program of the system's own takes such files, as
+    // binfmt-support's run-detectors on GitHub's ubuntu-22.04 runner, to
+    // that program, whose words the run quotes.
+    const windows = put("pe", tool, Buffer.concat([Buffer.from("4d5a90000300000004000000ffff0000b8", "hex"), Buffer.alloc(4096)]));
     cases.push(
       [`${tool} where nothing is`, ...given(at("nowhere", tool), "is not there")],
       [`${tool} a folder`, ...given(at("folder", tool), "is a folder")],
@@ -681,7 +686,7 @@ test("an ffmpeg or an ffprobe that cannot be started, or that does not answer as
       [`${tool} #! of a file that may not be run`, ...given(put("fileinterp", tool, `#!${at("not-a-program")}\n`), `did not run as ${tool}: the system could not start it: permission denied; its first line is "#!${at("not-a-program")}"`)],
       [`${tool} #! of a folder`, ...given(put("dirinterp", tool, `#!${root}\n`), `did not run as ${tool}: the system could not start it: permission denied; its first line is "#!${root}"`)],
       [`${tool} #! of a program env does not find`, ...given(viaEnv, printed(viaEnv, tool))],
-      [`${tool} for Windows`, { ...env, [variable]: put("pe", tool, Buffer.concat([Buffer.from("4d5a90000300000004000000ffff0000b8", "hex"), Buffer.alloc(4096)])) }, shellRead(variable, at("pe", tool), tool)],
+      [`${tool} for Windows`, ...(handled("4d5a") ? given(windows, printed(windows, tool)) : [{ ...env, [variable]: windows }, shellRead(variable, windows, tool)])],
       [`${tool} for macOS`, { ...env, [variable]: put("macho", tool, Buffer.concat([Buffer.from("cffaedfe07000001030000000200000000", "hex"), Buffer.alloc(4096)])) }, shellRead(variable, at("macho", tool), tool)],
       [`${tool} silent`, ...given(put("silent", tool, "#!/bin/sh\nexit 0\n"), `did not run as ${tool}: it printed nothing and exited with 0`)],
       [`${tool} saying its version on its error output`, ...given(toError, printed(toError, tool))],
