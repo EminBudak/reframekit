@@ -221,7 +221,7 @@ Loudness, black, still and silent stretches are what [launch-film](https://githu
 - A dissolve between two similar pictures can go unseen, and so can one that lasts longer than about two seconds or one between two pictures that differ only in their light; the window then glides across it. Split the shot in crop.json, or give every cut with `--cuts` (it replaces the cuts found); launch-film's timeline sets a film's shots exactly.
 - Light that changes all at once, as a lamp switched on, can be taken for a cut, and the shot is split there. Join the two shots in crop.json, or give every cut with `--cuts`.
 - It does not zoom in by itself; a smaller window in `crop.json` does.
-- It does not yet cut the stretches where the picture stands still and nothing is said. That is planned for the next version.
+- It does not yet cut the stretches where the picture stands still and nothing is said.
 - A long video takes memory in step with its length, for what is kept of its small frames: planning a one hour video took about 250 MB here, and a three hour one about 360 MB. Most of the time goes to ffmpeg decoding the picture, once to read it and once more for each file it renders.
 - HDR video is not tone mapped, so its colors come out flat. Convert it to SDR first.
 - A video joined from two recordings whose times jump comes out with its parts back to back, as ffmpeg copies it, and the sound of the later part can land a few hundredths of a second after its picture. Times that jump ahead by ten seconds or less are a gap ffmpeg keeps: the picture holds and the sound is silent until the later part starts, and `FORMATS.md` says where.
