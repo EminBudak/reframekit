@@ -883,6 +883,57 @@ cp.spawnSync = function (file, args, ...rest) {
   assert.ok(!given.made);
 });
 
+test("on Windows an FFMPEG_PATH written without .exe runs ffmpeg.exe with the ffprobe.exe next to it, a folder is named as one, and a file with no extension, which Windows does not run, is said to be so", { skip: process.platform === "win32" ? "it plays Windows on another system" : false }, () => {
+  // tools.js as it reads paths on Windows, in a node of its own: a disk
+  // that holds C:\ffmpeg\bin\ffmpeg.exe and ffprobe.exe, as a build for
+  // Windows unpacks, a folder that holds an ffmpeg with no extension next
+  // to ffmpeg.exe, and one with such a file alone; every program found
+  // answers as the tool it is asked for.
+  const script = path.join(dir, "as-windows.js");
+  fs.writeFileSync(script, `"use strict";
+Object.defineProperty(process, "platform", { value: "win32" });
+const fs = require("node:fs");
+const disk = { "C:\\\\ffmpeg": "dir", "C:\\\\ffmpeg\\\\bin": "dir", "C:\\\\ffmpeg\\\\bin\\\\ffmpeg.exe": "file", "C:\\\\ffmpeg\\\\bin\\\\ffprobe.exe": "file", "C:\\\\both": "dir", "C:\\\\both\\\\ffmpeg": "file", "C:\\\\both\\\\ffmpeg.exe": "file", "C:\\\\bare": "dir", "C:\\\\bare\\\\ffmpeg": "file" };
+const look = (file) => {
+  const kind = disk[String(file)];
+  if (!kind) throw Object.assign(new Error("ENOENT: no such file or directory, stat '" + file + "'"), { code: "ENOENT", errno: -4058 });
+  return { isDirectory: () => kind === "dir", isFile: () => kind === "file", isSymbolicLink: () => false, mode: kind === "dir" ? 0o40666 : 0o100666 };
+};
+fs.statSync = look;
+fs.lstatSync = look;
+fs.accessSync = (file) => void look(file);
+require("node:child_process").spawnSync = (file, args) => ({ pid: 1, error: null, status: 0, signal: null, stdout: (/ffprobe/i.test(file) ? "ffprobe" : "ffmpeg") + " version 7.1-full_build\\n", stderr: "" });
+for (const name of Object.keys(process.env)) if (/^(FFMPEG_PATH|FFPROBE_PATH|LAUNCH_FILM_FFMPEG|LAUNCH_FILM_FFPROBE|PATH)$/i.test(name)) delete process.env[name];
+const tools = require(process.argv[2]);
+const found = {};
+for (const [given, Path] of JSON.parse(process.argv[3])) {
+  if (given) process.env.FFMPEG_PATH = given;
+  else delete process.env.FFMPEG_PATH;
+  process.env.Path = Path;
+  found[given || Path] = [tools.ffmpegSource(), tools.ffprobeSource()].map((source) => {
+    try {
+      return tools.find(source).file;
+    } catch (err) {
+      return err.message;
+    }
+  });
+}
+console.log(JSON.stringify(found));
+`);
+  const asked = [["C:\\ffmpeg\\bin\\ffmpeg", ""], ["C:\\ffmpeg\\bin\\ffmpeg.exe", ""], ["C:\\ffmpeg\\bin", "C:\\ffmpeg\\bin"], ["C:\\both\\ffmpeg", "C:\\ffmpeg\\bin"], ["C:\\bare\\ffmpeg", "C:\\ffmpeg\\bin"], ["", "C:\\Windows;C:\\ffmpeg\\bin"]];
+  const r = spawnSync(process.execPath, [script, path.join(__dirname, "..", "skills", "reframekit", "scripts", "lib", "tools.js"), JSON.stringify(asked)], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const how = `Set FFMPEG_PATH to an ffmpeg that runs, or unset it and install one (${INSTALL}).`;
+  assert.deepEqual(JSON.parse(r.stdout), {
+    "C:\\ffmpeg\\bin\\ffmpeg": ["C:\\ffmpeg\\bin\\ffmpeg.exe", "C:\\ffmpeg\\bin\\ffprobe.exe"],
+    "C:\\ffmpeg\\bin\\ffmpeg.exe": ["C:\\ffmpeg\\bin\\ffmpeg.exe", "C:\\ffmpeg\\bin\\ffprobe.exe"],
+    "C:\\ffmpeg\\bin": [`reframekit needs ffmpeg and ffprobe, and FFMPEG_PATH points to C:\\ffmpeg\\bin, which is a folder, with C:\\ffmpeg\\bin\\ffmpeg.exe in it. ${how}`, "C:\\ffmpeg\\bin\\ffprobe.exe"],
+    "C:\\both\\ffmpeg": ["C:\\both\\ffmpeg.exe", "C:\\ffmpeg\\bin\\ffprobe.exe"],
+    "C:\\bare\\ffmpeg": [`reframekit needs ffmpeg and ffprobe, and FFMPEG_PATH points to C:\\bare\\ffmpeg, which has no .exe in its name, so Windows does not run it. ${how}`, "C:\\ffmpeg\\bin\\ffprobe.exe"],
+    "C:\\Windows;C:\\ffmpeg\\bin": ["C:\\ffmpeg\\bin\\ffmpeg.exe", "C:\\ffmpeg\\bin\\ffprobe.exe"],
+  });
+});
+
 test("a line a program printed is quoted as it is, its control characters written out, and a long one keeps its start and its end", () => {
   const { quoted } = require("../skills/reframekit/scripts/lib/tools");
   assert.equal(quoted("#!/bin/sh\r"), '"#!/bin/sh\\r"');

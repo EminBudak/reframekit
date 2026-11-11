@@ -12,7 +12,6 @@
 // scripts is at fault is never guessed: the line it printed says that.
 
 const fs = require("node:fs");
-const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { getSystemErrorMap } = require("node:util");
 
@@ -20,10 +19,22 @@ const INSTALL = "brew install ffmpeg, sudo apt install ffmpeg or winget install 
 const MISSING = `reframekit needs ffmpeg and ffprobe. Install ffmpeg (${INSTALL}), or set FFMPEG_PATH and FFPROBE_PATH to them.`;
 
 const windows = process.platform === "win32";
+// Paths as this system writes them: node:path itself on each system, named
+// so a test can read Windows paths on another.
+const path = require("node:path")[windows ? "win32" : "posix"];
 
 // A path is a name with a slash in it, or on Windows a backslash too, as
 // the system reads it there; any other name is looked for on PATH.
 const isPath = (name) => (windows ? /[\\/]/ : /\//).test(name);
+
+// Whether Windows runs a file by the name it is given: one whose name has
+// a dot with something after it. A name with none it runs only as that
+// name with .com or .exe added.
+const hasExtension = (file) => {
+  const name = file.split(/[\\/:]/).pop();
+  const dot = name.indexOf(".");
+  return dot >= 0 && dot < name.length - 1;
+};
 
 // A tool a variable names: a path, as ../bin/ffmpeg, from the folder the
 // run was started in, since most of the kit's ffmpeg runs start in its
@@ -44,8 +55,11 @@ function ffmpegSource() {
 // path, whatever is next to it by ffprobe's name (`beside`, that ffmpeg's
 // source), a link that leads nowhere too, so a broken one is named rather
 // than passed over for another; else the one on PATH (`after`, that
-// ffmpeg's source, when there was none next to it). An ffmpeg named by a
-// bare name, as ffmpeg-8, has nothing next to it: PATH finds each.
+// ffmpeg's source, when there was none next to it). Next to it is where
+// the system would look for that name (places()): on Windows, an ffmpeg
+// given as C:\ffmpeg\bin\ffmpeg runs as ffmpeg.exe, and ffprobe.exe next
+// to it is the one. An ffmpeg named by a bare name, as ffmpeg-8, has
+// nothing next to it: PATH finds each.
 function ffprobeSource() {
   const variable = ["FFPROBE_PATH", "LAUNCH_FILM_FFPROBE"].find((name) => process.env[name]) || null;
   if (variable) return { tool: "ffprobe", program: located(process.env[variable]), variable };
@@ -53,7 +67,7 @@ function ffprobeSource() {
   if (ff.variable && isPath(ff.program)) {
     const next = path.join(path.dirname(ff.program), path.basename(ff.program).replace(/ffmpeg/i, "ffprobe"));
     if (next !== ff.program) {
-      if (lstatOf(next)) return { tool: "ffprobe", program: next, variable: null, beside: ff };
+      if (places(next).some(({ file }) => lstatOf(file))) return { tool: "ffprobe", program: next, variable: null, beside: ff };
       return { tool: "ffprobe", program: "ffprobe", variable: null, after: ff };
     }
   }
@@ -85,10 +99,12 @@ const pathKey = () => (windows ? Object.keys(process.env).find((k) => k.toUpperC
 // /usr/bin when there is no PATH at all, as glibc looks. Windows looks in
 // the current folder first, then in each entry of PATH (one in quotes as
 // the folder inside them), with .com and .exe after the name, which it
-// tries as it is only when it has an extension.
+// tries as it is only when it has an extension (hasExtension()). A path
+// is tried as it is first all the same, so one with no extension is named
+// for what it is, a folder or a file Windows does not run (barred()).
 function places(name) {
-  const names = windows ? [...(path.extname(name) ? [name] : []), `${name}.com`, `${name}.exe`] : [name];
-  if (isPath(name)) return names.map((file) => ({ file }));
+  if (isPath(name)) return (windows ? [name, `${name}.com`, `${name}.exe`] : [name]).map((file) => ({ file }));
+  const names = windows ? [...(hasExtension(name) ? [name] : []), `${name}.com`, `${name}.exe`] : [name];
   const key = pathKey();
   const value = key ? process.env[key] : undefined;
   if (windows) {
@@ -226,7 +242,8 @@ const UNREACHED = new Set(["ESTALE", "ENODEV", "ETIMEDOUT"]);
 // nothing is, one in a folder this user may not enter and one on a mount
 // it cannot reach "quietly", as such a place may hold no such program at
 // all; and it stops at a place it cannot follow, as a loop of links
-// ("stops").
+// ("stops"). Windows runs no file whose name has no extension, and passes
+// over it.
 function barred(file) {
   let stat;
   try {
@@ -256,6 +273,7 @@ function barred(file) {
   }
   if (stat.isDirectory()) return { on: "passes", words: "is a folder", folder: true };
   if (!stat.isFile()) return { on: "passes", words: "is not a file" };
+  if (windows && !hasExtension(file)) return { on: "passes", words: "has no .exe in its name, so Windows does not run it" };
   try {
     fs.accessSync(file, fs.constants.X_OK);
   } catch {
