@@ -596,6 +596,36 @@ test("each frame of the sheet is decoded with two threads, not with one more tha
   for (const line of grabs) assert.match(line, / -threads 2 (?:(?! -i ).)* -i /, line);
 });
 
+test("the frames of the sheet of a video over 8 megapixels a frame, as 3840x2160, are taken two at a time, where four took more memory than the rest of a plan, and those of a smaller one four at a time", { skip: process.platform === "win32" }, () => {
+  // The system's ffmpeg, but each run that takes a frame for the sheet
+  // first marks itself as running, waits long enough for the others the
+  // run starts with it to do the same, and writes down how many run.
+  const bin = outDir("grabs-at-once");
+  const real = spawnSync("sh", ["-c", "command -v ffmpeg"], { encoding: "utf8" }).stdout.trim();
+  const tool = path.join(bin, "ffmpeg");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(tool, `#!/bin/sh\ncase " $* " in *" -frames:v 1 "*"rawvideo pipe:1 "*)\n  : > "$GRABS/$$"\n  sleep 0.4\n  ls "$GRABS" | wc -l >> "$GRABS.log"\n  "${real}" "$@"\n  s=$?\n  rm -f "$GRABS/$$"\n  exit $s;;\nesac\nexec "${real}" "$@"\n`);
+  fs.chmodSync(tool, 0o755);
+  // Two shots of 1.5 s at 3840x2160, three frames of each on the sheet.
+  const uhd = path.join(dir, "uhd-two-shots.mp4");
+  ffmpeg([
+    "-f", "lavfi", "-i", "color=c=0x202830:s=3840x2160:r=10:d=1.5,drawbox=x='400+1200*t':y=900:w=360:h=360:color=white:t=fill",
+    "-f", "lavfi", "-i", "color=c=0x305070:s=3840x2160:r=10:d=1.5,drawbox=x=3000:y='300+600*t':w=300:h=300:color=0xffcc00:t=fill",
+    "-filter_complex", "[0][1]concat=n=2:v=1:a=0[v]", "-map", "[v]", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", uhd,
+  ]);
+  for (const [name, video, most] of [["3840x2160", uhd, 2], ["640x360", fixture("twoShots"), 4]]) {
+    const grabs = path.join(bin, name);
+    fs.mkdirSync(grabs);
+    const out = outDir(`grabs-at-once-${name}`);
+    const r = cli([video, "--for", "180x320", "--cuts", name === "640x360" ? "2" : "1.5", "--plan", "--out", out], { env: { ...process.env, FFMPEG_PATH: tool, GRABS: grabs } });
+    assert.equal(r.status, 0, `${name}: ${r.stderr}`);
+    assert.ok(fs.existsSync(path.join(out, "sheet.png")), name);
+    const counts = fs.readFileSync(`${grabs}.log`, "utf8").trim().split("\n").map(Number);
+    assert.equal(counts.length, 6, `${name}: ${counts}`);
+    assert.equal(Math.max(...counts), most, `${name}: ${counts}`);
+  }
+});
+
 test("an MPEG-PS whose sound an MP4 cannot hold as it is, as a DVD's PCM, renders with that sound on its frame, and formats.json names the sound's own codec", () => {
   // A DVD's VOB: MPEG-2 picture and PCM sound, the flash and the click at
   // 1 s. Its copy holds the sound as ALAC.

@@ -29,7 +29,7 @@ const INK = { ground: "#111114", text: "#f4f1ea", dim: "#8b8a93", panel: "#1c1c2
 // from failing for that alone. It decodes with two threads: by itself
 // ffmpeg takes one more than the cores it counts, up to 16, each with
 // frames of its own, and ffmpeg 4.4.2 counts every core of the machine,
-// so a grab of a 10-bit 3840x2160 video took 0.75 GB there, and 0.26 GB
+// so a grab of a 10-bit 3840x2160 video took 0.9 GB there, and 0.3 GB
 // with two threads. A grab that fails otherwise, or that a signal ends,
 // as when the system kills it as memory runs out, fails with how ffmpeg
 // ended (ffmpeg.js mustRun()), never taken for a moment with no picture.
@@ -63,13 +63,21 @@ async function pool(items, jobs, fn) {
   return out;
 }
 
-// The frames of `wanted`, four at once. A grab the system killed (SIGKILL),
-// as it does when memory runs out, is taken again alone once the others
-// are done, so a run near the memory it may take still draws every frame;
-// a second kill, or any other failure, stops the run.
+// How many frames of the sheet are taken at once: four, or two for a video
+// whose frames are over 8 megapixels, as 3840x2160 is. Held to 2 cores,
+// four frames of a 10-bit 3840x2160 video took about 1.1 GB at once, more
+// than reading the whole video took: 0.5 GB with ffmpeg 8.0, and 0.94 GB
+// with Ubuntu 22.04's 4.4.2, which counts every core of the machine.
+const BIG_FRAME = 8_000_000;
+const grabsAtOnce = (video) => (video.width * video.height > BIG_FRAME ? 2 : 4);
+
+// The frames of `wanted`, `jobs` at once. A grab the system killed
+// (SIGKILL), as it does when memory runs out, is taken again alone once
+// the others are done, so a run near the memory it may take still draws
+// every frame; a second kill, or any other failure, stops the run.
 const KILLED = Symbol("killed");
-async function grabAll(wanted, grab) {
-  const got = await pool(wanted, 4, (item) =>
+async function grabAll(wanted, grab, jobs) {
+  const got = await pool(wanted, jobs, (item) =>
     grab(item).catch((err) => {
       if (err.signal === "SIGKILL") return KILLED;
       throw err;
@@ -168,7 +176,7 @@ async function drawSheets({ info, picture, shots: all, shapes, work, title, held
   for (let first = 0; first < shots.length; first += SHOTS_PER_PAGE) {
     const rows = shots.slice(first, first + SHOTS_PER_PAGE);
     const wanted = rows.flatMap((s, r) => (many ? [moments[first + r][0]] : moments[first + r]).map((t) => ({ i: first + r, t })));
-    const got = await grabAll(wanted, ({ t }) => frameAt(info, isHeld(t) ? lastAt : t, tw, th, work));
+    const got = await grabAll(wanted, ({ t }) => frameAt(info, isHeld(t) ? lastAt : t, tw, th, work), grabsAtOnce(video));
     frames = new Map(wanted.map((w, k) => [`${w.i} ${w.t}`, got[k]]));
     // A row per shot, or, for a video of many shots, three shots to a row.
     const perRow = many ? 3 : 1;
