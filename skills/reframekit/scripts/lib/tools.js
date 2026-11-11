@@ -322,7 +322,10 @@ const MAX = 1024 * 1024;
 function answered(r) {
   const out = firstLine(r.stdout);
   const err = firstLine(r.stderr);
-  if (r.error && r.error.code === "ENOBUFS") return `it printed ${quoted(err || out)} and went on past ${MAX / 1024 / 1024} MB, so it was stopped`;
+  if (r.error && r.error.code === "ENOBUFS") {
+    const line = err || out;
+    return line ? `it printed ${quoted(line)} and went on past ${MAX / 1024 / 1024} MB, so it was stopped` : `it printed more than ${MAX / 1024 / 1024} MB with no line of text in it, so it was stopped`;
+  }
   const ended = r.signal ? `was stopped by ${r.signal}` : `exited with ${r.status}`;
   if (err && r.status === 0 && !out) return `it printed ${quoted(err)} on its error output, nothing on its output, and exited with 0`;
   if (err || out) return `it printed ${quoted(err || out)} and ${ended}`;

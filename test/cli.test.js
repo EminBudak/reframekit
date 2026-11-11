@@ -657,6 +657,10 @@ test("an ffmpeg or an ffprobe that cannot be started, or that does not answer as
     const empty = put("empty", tool, "");
     const toError = put("to-error", tool, `#!/bin/sh\nexec "${real[tool]}" "$@" >&2\n`);
     const term = put("term", tool, "#!/bin/sh\nkill -TERM $$\n");
+    // Programs that print more than the 1 MB taken in: blank lines alone,
+    // and a line, then blank ones.
+    const blank = put("blank", tool, '#!/bin/sh\nyes "" | head -c 3000000\n');
+    const flood = put("flood", tool, '#!/bin/sh\necho "first words"\nyes "" | head -c 3000000\n');
     cases.push(
       [`${tool} where nothing is`, ...given(at("nowhere", tool), "is not there")],
       [`${tool} a folder`, ...given(at("folder", tool), "is a folder")],
@@ -683,6 +687,8 @@ test("an ffmpeg or an ffprobe that cannot be started, or that does not answer as
       [`${tool} saying its version on its error output`, ...given(toError, printed(toError, tool))],
       [`${tool} stopped by a signal as it is asked`, ...given(term, `did not run as ${tool}: it was stopped by SIGTERM`)],
       [`${tool} the other tool`, ...given(real[other], printed(real[other], tool))],
+      [`${tool} printing more than 1 MB of blank lines`, ...given(blank, `did not run as ${tool}: it printed more than 1 MB with no line of text in it, so it was stopped`)],
+      [`${tool} printing a line, then more than 1 MB`, ...given(flood, `did not run as ${tool}: it printed "first words" and went on past 1 MB, so it was stopped`)],
     );
     // What the program printed names the cause: env the program it did not
     // find, the shell the program that is not there.
