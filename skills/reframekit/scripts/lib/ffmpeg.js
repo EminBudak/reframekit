@@ -707,8 +707,11 @@ async function readableCopy(info, work, name = info.file) {
 // [[from, to]], fps: { avg, base } or null when the picture has no gap }.
 // ffprobe lists the copy's packets through run(), each line read as it
 // comes, so a signal stops it with the run, as it stops ffmpeg, and the
-// list of a long copy is never held whole.
-async function gapsOf(info) {
+// list of a long copy is never held whole. A list that fails, or that a
+// signal ends, as when the system kills ffprobe as memory runs out, says
+// nothing of the gaps: the run stops with how ffprobe ended, never going
+// on as if the copy had none. `name` is the video as it was given.
+async function gapsOf(info, name = info.file) {
   const none = { picture: [], sound: [], fps: null };
   if (!info.video) return none;
   const starts = { [info.video.index]: [], ...(info.audio ? { [info.audio.index]: [] } : {}) };
@@ -727,7 +730,12 @@ async function gapsOf(info) {
     },
   });
   if (rest) take(rest);
-  if (r.code !== 0) return none;
+  if (r.code !== 0) {
+    const what = `Looking for gaps in the copy of ${name}: ffprobe`;
+    if (stops(r.signal)) throw Object.assign(new Error(`${what} ${endedBy(r.signal)}`), { stopped: r.signal });
+    const said = lastLine(r.stderr).split(info.file).join("the copy");
+    throw new Error(`${what} ${r.signal ? endedBy(r.signal) : `failed${said ? `: ${said}` : ""}`}`);
+  }
   const origin = Number.isFinite(info.origin) ? info.origin : 0;
   // The stretches between two starts in a row too far apart, and the
   // spacing of most.

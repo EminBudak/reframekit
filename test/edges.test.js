@@ -356,6 +356,32 @@ test("an MPEG-TS joined from two recordings at 30 fps, whose copy puts two frame
   assert.equal(probe(path.join(out, "180x320.mp4")).video.fps, 30);
 });
 
+test("an MPEG-TS whose copy's times ffprobe fails to list, as one the system kills as memory runs out, stops the run with how ffprobe ended, where the run went on as if the copy had no gap", { skip: process.platform === "win32" }, () => {
+  // The system's ffprobe, but for the list of the times of the copy's
+  // packets, which tells the gaps: killed, or failing with a line.
+  const bin = outDir("gap-list-bin");
+  fs.mkdirSync(bin, { recursive: true });
+  const real = spawnSync("sh", ["-c", "command -v ffprobe"], { encoding: "utf8" }).stdout.trim();
+  const tool = (name, act) => {
+    fs.writeFileSync(path.join(bin, name), `#!/bin/sh\ncase " $* " in *" packet=stream_index,pts_time -of "*) ${act};; esac\nexec "${real}" "$@"\n`);
+    fs.chmodSync(path.join(bin, name), 0o755);
+    return path.join(bin, name);
+  };
+  const ts = path.join(dir, "gap-list.ts");
+  ffmpeg(["-i", fixture("twoShots"), "-c", "copy", "-f", "mpegts", ts]);
+  const said = {
+    killed: ["kill -KILL $$", "ffprobe was killed (SIGKILL), as when the machine runs out of memory"],
+    failing: ["echo 'cannot list them' >&2; exit 1", "ffprobe failed: cannot list them"],
+  };
+  for (const [name, [act, words]] of Object.entries(said)) {
+    const out = outDir(`gap-list-${name}`);
+    const r = cli([ts, "--for", "180x320", "--plan", "--out", out], { env: { ...process.env, FFPROBE_PATH: tool(name, act) } });
+    assert.equal(r.status, 1, `${name}: ${r.stderr}`);
+    assert.ok(r.stderr.endsWith(`\nreframekit: Looking for gaps in the copy of ${ts}: ${words}\n`), `${name}: ${r.stderr}`);
+    assert.ok(!fs.existsSync(out), name);
+  }
+});
+
 test("a picture that changes its size or its range part way, as two recordings joined or a WebM of a window resized, is read whole and comes out at the size of its first frames", () => {
   // Two seconds of a dark red picture at 320x180, then two of a dark blue
   // one, at 640x360 or at 320x180 in full range, each with a box that

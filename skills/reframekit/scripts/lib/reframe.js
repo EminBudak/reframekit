@@ -503,7 +503,7 @@ async function reframe(video, options = {}) {
       // A jump ahead of ten seconds or less, which the copy keeps as a gap:
       // said where it is, and the picture's rate taken from its frames
       // outside it.
-      const gaps = await gapsOf(info);
+      const gaps = await gapsOf(info, video);
       if (gaps.fps) info.video = { ...info.video, ...ratesOf(gaps.fps.avg, gaps.fps.base) };
       notes.push(...gapNotes(gaps, path.basename(video)));
       fitted = fitArguments(args, info, shapes, options);
