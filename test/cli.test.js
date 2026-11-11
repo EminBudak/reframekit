@@ -453,13 +453,12 @@ test("an ffmpeg with no H.264 encoder a render can use, or with no AAC encoder, 
   }
 });
 
-test("an ffmpeg or an ffprobe that does not answer is named with why it did not, and only one that is not there is to be installed", { skip: process.platform === "win32" }, () => {
-  const { unanswered, MISSING } = require("../skills/reframekit/scripts/lib/ffmpeg");
+test("an ffmpeg or an ffprobe that does not answer is named with why it did not", { skip: process.platform === "win32" }, () => {
+  const { unanswered } = require("../skills/reframekit/scripts/lib/ffmpeg");
   // One too slow to answer, as on a machine too busy, which spawnSync ends.
   const late = { error: Object.assign(new Error("spawnSync ffprobe ETIMEDOUT"), { code: "ETIMEDOUT" }), signal: "SIGTERM", status: null };
   assert.equal(unanswered("ffprobe", late, 120_000, "while it read film.mp4").message, "ffprobe did not answer within 120 s while it read film.mp4: the machine may be too busy. Run reframekit again when the machine is less busy.");
-  assert.equal(unanswered("ffmpeg", late, 60_000, "when asked which version it is").message, "ffmpeg did not answer within 60 s when asked which version it is: the machine may be too busy. Run reframekit again when the machine is less busy.");
-  assert.equal(unanswered("ffmpeg", { error: Object.assign(new Error("spawnSync ffmpeg ENOENT"), { code: "ENOENT" }) }, 60_000).message, MISSING);
+  assert.equal(unanswered("ffmpeg", late, 60_000, "when asked to list its filters").message, "ffmpeg did not answer within 60 s when asked to list its filters: the machine may be too busy. Run reframekit again when the machine is less busy.");
   // A signal that stops a run, as Ctrl-C, is a stop (`stopped`); a crash,
   // or the system's kill when memory runs out, is not.
   const ended = (signal) => unanswered("ffprobe", { signal, status: null }, 120_000, "while it read film.mp4");
@@ -469,11 +468,12 @@ test("an ffmpeg or an ffprobe that does not answer is named with why it did not,
   assert.deepEqual([ended("SIGABRT").message, ended("SIGBUS").message], ["ffprobe crashed (SIGABRT) while it read film.mp4", "ffprobe crashed (SIGBUS) while it read film.mp4"]);
   assert.deepEqual([ended("SIGKILL").message, ended("SIGKILL").stopped], ["ffprobe was killed (SIGKILL) while it read film.mp4, as when the machine runs out of memory", undefined]);
   assert.deepEqual([ended("SIGXCPU").message, ended("SIGXCPU").stopped], ["ffprobe was killed (SIGXCPU) while it read film.mp4", undefined]);
-  // A program given for ffmpeg that is none, one that cannot be run, and
-  // an ffmpeg killed, crashing, or failing, as it says what it is or lists
-  // what it has.
+  // A program given for ffmpeg that is none, a file and a folder that
+  // cannot be run, and an ffmpeg that crashes as it says what it is, or
+  // that is killed or fails as it lists what it has: after its version, a
+  // failure is told by the tool's path and what it was asked.
   const bin = outDir("tool-bin");
-  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(path.join(bin, "folder"), { recursive: true });
   const real = spawnSync("sh", ["-c", "command -v ffmpeg"], { encoding: "utf8" }).stdout.trim();
   const probe = spawnSync("sh", ["-c", "command -v ffprobe"], { encoding: "utf8" }).stdout.trim();
   const tools = {
@@ -489,10 +489,11 @@ test("an ffmpeg or an ffprobe that does not answer is named with why it did not,
   fs.writeFileSync(path.join(bin, "shut"), "#!/bin/sh\n");
   fs.chmodSync(path.join(bin, "shut"), 0o644);
   const said = {
-    other: `${path.join(bin, "other")} failed when asked which version it is: not an ffmpeg. ${MISSING}`,
-    shut: `${path.join(bin, "shut")} could not be run: permission denied`,
+    other: pointsTo("FFMPEG_PATH", path.join(bin, "other"), 'did not run as ffmpeg: it printed "not an ffmpeg" and exited with 3'),
+    shut: pointsTo("FFMPEG_PATH", path.join(bin, "shut"), "is not executable"),
+    folder: pointsTo("FFMPEG_PATH", path.join(bin, "folder"), "is a folder"),
     killed: `${path.join(bin, "killed")} was killed (SIGKILL) when asked to list its filters, as when the machine runs out of memory`,
-    crashing: `${path.join(bin, "crashing")} crashed (SIGSEGV) when asked which version it is`,
+    crashing: pointsTo("FFMPEG_PATH", path.join(bin, "crashing"), "did not run as ffmpeg: it was stopped by SIGSEGV"),
     failing: `${path.join(bin, "failing")} failed when asked to list its encoders: cannot list them`,
   };
   for (const [name, words] of Object.entries(said)) {
@@ -500,6 +501,427 @@ test("an ffmpeg or an ffprobe that does not answer is named with why it did not,
     assert.equal(r.status, 1, `${name}: ${r.stderr}`);
     assert.equal(r.stderr, `reframekit: ${words}\n`, name);
     assert.ok(!fs.existsSync(outDir(`tool-${name}`)), name);
+  }
+  // An ffprobe given as a folder or as a file that cannot be run stops a
+  // render, a plan and a check the same way.
+  for (const name of ["folder", "shut"]) {
+    for (const [i, args] of [[fixture("twoShots"), "--for", "180x320"], [fixture("twoShots"), "--for", "180x320", "--plan"], ["check", fixture("twoShots"), "--for", "youtube"]].entries()) {
+      const out = outDir(`probe-${name}-${i}`);
+      const r = cli([...args, "--out", out], { env: { ...process.env, FFMPEG_PATH: real, FFPROBE_PATH: path.join(bin, name) } });
+      assert.equal(r.status, 1, `${name} ${i}: ${r.stderr}`);
+      assert.equal(r.stderr, `reframekit: ${pointsTo("FFPROBE_PATH", path.join(bin, name), name === "folder" ? "is a folder" : "is not executable")}\n`, `${name} ${i}`);
+      assert.ok(!fs.existsSync(out), `${name} ${i}`);
+    }
+  }
+});
+
+// The ffmpeg and the ffprobe on PATH, as files, and what a run that cannot
+// use a tool says of it, with how to get one.
+const INSTALL = "brew install ffmpeg, sudo apt install ffmpeg or winget install ffmpeg";
+const realTool = (tool) => fs.realpathSync(spawnSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim());
+const toGet = {
+  FFMPEG_PATH: `Set FFMPEG_PATH to an ffmpeg that runs, or unset it and install one (${INSTALL}).`,
+  LAUNCH_FILM_FFMPEG: `Set LAUNCH_FILM_FFMPEG to an ffmpeg that runs, or unset it and install one (${INSTALL}).`,
+  FFPROBE_PATH: `Set FFPROBE_PATH to an ffprobe that runs, or unset it and install ffmpeg, which comes with one (${INSTALL}).`,
+  LAUNCH_FILM_FFPROBE: `Set LAUNCH_FILM_FFPROBE to an ffprobe that runs, or unset it and install ffmpeg, which comes with one (${INSTALL}).`,
+  ffmpeg: `Install ffmpeg (${INSTALL}), or set FFMPEG_PATH to an ffmpeg that runs.`,
+  ffprobe: `Install ffmpeg, which comes with ffprobe (${INSTALL}), or set FFPROBE_PATH to an ffprobe that runs.`,
+  beside: `Set FFPROBE_PATH to an ffprobe that runs, such as the one that comes with ffmpeg (${INSTALL}).`,
+};
+function pointsTo(variable, file, what) {
+  return `reframekit needs ffmpeg and ffprobe, and ${variable} points to ${file}, which ${what}. ${toGet[variable]}`;
+}
+const onPathIs = (tool, file, what) => `reframekit needs ffmpeg and ffprobe, and the ${tool} on your PATH, ${file}, ${what}. ${toGet[tool]}`;
+
+// What a run says of a file that ran when asked its version and did not
+// answer as `tool` does: the first line it printed, on its error output or
+// else on its output, in quotes, and how it ended, as the test sees it run
+// the same way.
+function printed(file, tool = "ffmpeg") {
+  const { quoted } = require("../skills/reframekit/scripts/lib/tools");
+  const r = spawnSync(file, ["-hide_banner", "-version"], { encoding: "utf8" });
+  const first = (text) => String(text || "").split(/\r?\n/).find((line) => line.trim());
+  const line = first(r.stderr);
+  if (line && r.status === 0 && !first(r.stdout)) return `did not run as ${tool}: it printed ${quoted(line)} on its error output, nothing on its output, and exited with 0`;
+  const ended = r.signal ? `was stopped by ${r.signal}` : `exited with ${r.status}`;
+  if (line || first(r.stdout)) return `did not run as ${tool}: it printed ${quoted(line || first(r.stdout))} and ${ended}`;
+  return `did not run as ${tool}: ${r.signal ? `it was stopped by ${r.signal}` : `it printed nothing and exited with ${r.status}`}`;
+}
+
+// What a run says of a file the system did not start, as its interpreter
+// or its loader is not there, with the first line of a script.
+const lacking = (tool, line) => {
+  const { quoted } = require("../skills/reframekit/scripts/lib/tools");
+  return `did not run as ${tool}: the system could not start it, as an interpreter or a loader it needs is not there${line ? `; its first line is ${quoted(line)}` : ""}`;
+};
+
+// Whether binfmt_misc gives files that start with `magic` (in hex) to a
+// program of its own, as qemu or wine, which would run them.
+function handled(magic) {
+  try {
+    const root = "/proc/sys/fs/binfmt_misc";
+    return fs.readdirSync(root).some((name) => {
+      if (name === "register" || name === "status") return false;
+      const entry = fs.readFileSync(path.join(root, name), "utf8");
+      return /^enabled$/m.test(entry) && entry.includes(`\nmagic ${magic}`);
+    });
+  } catch {
+    return false;
+  }
+}
+
+// What a run says of a program made for another system or other
+// processors, which the system gives to /bin/sh to read as a script: the
+// shell's first line names the file, but what follows is the program's
+// bytes, and which of the lines it prints comes first can change from one
+// run to the next, as some bytes make it run commands at once.
+const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const shellRead = (variable, file, tool) => new RegExp(`^${escaped(pointsTo(variable, file, "\0"))}$`.replace(escaped("\0"), `did not run as ${tool}: it printed "${escaped(file)}: .*" and (exited with \\d+|was stopped by SIG\\w+)`));
+
+// Runs reframekit with `env` and each of a render, a plan and a check, or
+// the one `only` names, and holds that each stops before any work with
+// `message` (or one it matches), exit code 1, no out folder and nothing
+// left in TMPDIR, and with --json gives the same error on stdout.
+function stopsBeforeWork(name, env, message, only = null) {
+  const runs = { render: [fixture("twoShots"), "--for", "180x320"], plan: [fixture("twoShots"), "--for", "180x320", "--plan"], check: ["check", fixture("twoShots"), "--for", "youtube"], json: [fixture("twoShots"), "--for", "180x320", "--json"] };
+  for (const [mode, args] of Object.entries(runs)) {
+    if (only && only !== mode) continue;
+    const folder = outDir(path.join("unstarted-runs", `${name}-${mode}`));
+    const tmp = path.join(folder, "tmp");
+    fs.mkdirSync(tmp, { recursive: true });
+    const r = cli([...args, "--out", path.join(folder, "out")], { env: { ...env, TMPDIR: tmp } });
+    assert.equal(r.status, 1, `${name} ${mode}: ${r.stderr}`);
+    const said = r.stderr.replace(/^reframekit: /, "").replace(/\n$/, "");
+    if (message instanceof RegExp) assert.match(said, message, `${name} ${mode}`);
+    else assert.equal(r.stderr, `reframekit: ${message}\n`, `${name} ${mode}`);
+    assert.ok(/^reframekit: [^\n]*\n$/.test(r.stderr), `${name} ${mode}: ${r.stderr}`);
+    if (mode === "json") assert.deepEqual(JSON.parse(r.stdout), { ok: false, error: said }, `${name} ${mode}`);
+    assert.deepEqual(fs.readdirSync(folder), ["tmp"], `${name} ${mode}`);
+    assert.deepEqual(fs.readdirSync(tmp), [], `${name} ${mode}`);
+  }
+}
+
+test("an ffmpeg or an ffprobe that cannot be started, or that does not answer as one when asked its version, stops a run before any work with the variable or PATH that gives it, its path, what the system or the program said and how to get one", { skip: process.platform !== "linux" ? "the ways a program cannot start are Linux's here" : false }, () => {
+  const root = outDir("unstarted");
+  const at = (...names) => path.join(root, ...names);
+  const real = { ffmpeg: realTool("ffmpeg"), ffprobe: realTool("ffprobe") };
+  const root0 = process.getuid && process.getuid() === 0;
+  const put = (kind, tool, data, mode = 0o755) => {
+    fs.mkdirSync(at(kind), { recursive: true });
+    fs.writeFileSync(at(kind, tool), data);
+    fs.chmodSync(at(kind, tool), mode);
+    return at(kind, tool);
+  };
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(at("afile"), "x");
+  fs.writeFileSync(at("not-a-program"), "x");
+  const cases = [];
+  for (const tool of ["ffmpeg", "ffprobe"]) {
+    const other = tool === "ffmpeg" ? "ffprobe" : "ffmpeg";
+    const variable = tool === "ffmpeg" ? "FFMPEG_PATH" : "FFPROBE_PATH";
+    const env = { ...process.env, FFMPEG_PATH: real.ffmpeg, FFPROBE_PATH: real.ffprobe };
+    const given = (file, what) => [{ ...env, [variable]: file }, pointsTo(variable, file, what)];
+    fs.mkdirSync(at("folder", tool), { recursive: true });
+    fs.mkdirSync(at("linkdir"), { recursive: true });
+    fs.symlinkSync(at("folder", tool), at("linkdir", tool));
+    fs.mkdirSync(at("dangling"), { recursive: true });
+    fs.symlinkSync(at("nowhere", tool), at("dangling", tool));
+    fs.mkdirSync(at("loop"), { recursive: true });
+    fs.symlinkSync(at("loop", `${tool}-2`), at("loop", tool));
+    fs.symlinkSync(at("loop", tool), at("loop", `${tool}-2`));
+    // A link through a file, which the system takes for a folder there.
+    fs.mkdirSync(at("linkthru"), { recursive: true });
+    fs.symlinkSync(at("afile", tool), at("linkthru", tool));
+    const script = put("badinterp", tool, "#!/nonexistent/interpreter\n");
+    // A script whose interpreter is a script whose interpreter is missing,
+    // one whose #! line ends in a carriage return, as a file saved with
+    // Windows line ends, which the system takes as part of its name, and
+    // one whose #! line names itself.
+    const nested = put("nested", tool, `#!${script}\n`);
+    const crlf = put("crlf", tool, `#!/bin/sh\r\nexec "${real[tool]}" "$@"\r\n`);
+    const self = put("self", tool, `#!${at("self", tool)}\n`);
+    // A script that starts its program through env, which is not there:
+    // env names it, on the first line it prints, before any hint.
+    const viaEnv = put("env", tool, "#!/usr/bin/env nothing-such-program\n");
+    // A text file with no #! line, which the system gives to /bin/sh, and
+    // which runs a program that is not there.
+    const bare = put("bare", tool, "exec /nonexistent/bin/ffmpeg \"$@\"\n");
+    const text = put("text", tool, "not a program\n");
+    const empty = put("empty", tool, "");
+    const toError = put("to-error", tool, `#!/bin/sh\nexec "${real[tool]}" "$@" >&2\n`);
+    const term = put("term", tool, "#!/bin/sh\nkill -TERM $$\n");
+    cases.push(
+      [`${tool} where nothing is`, ...given(at("nowhere", tool), "is not there")],
+      [`${tool} a folder`, ...given(at("folder", tool), "is a folder")],
+      [`${tool} a link to a folder`, ...given(at("linkdir", tool), "is a folder")],
+      [`${tool} a link that leads nowhere`, ...given(at("dangling", tool), `is a link to ${at("nowhere", tool)}, which is not there`)],
+      [`${tool} a loop of links`, ...given(at("loop", tool), "is a link that leads back to itself")],
+      [`${tool} through a file`, ...given(at("afile", tool), `is not there, as ${at("afile")} is a file, not a folder`)],
+      [`${tool} a link through a file`, ...given(at("linkthru", tool), `is a link to ${path.join(fs.realpathSync(at("afile")), tool)}, which is not there, as ${fs.realpathSync(at("afile"))} is a file, not a folder`)],
+      [`${tool} not a file`, ...given("/dev/null", "is not a file")],
+      [`${tool} not executable`, ...given(put("plain", tool, "#!/bin/sh\n", 0o644), "is not executable")],
+      [`${tool} empty`, ...given(empty, `did not run as ${tool}: it printed nothing and exited with 0`)],
+      [`${tool} text with no #!`, ...given(text, printed(text, tool))],
+      [`${tool} a script with no #! line whose program is not there`, ...given(bare, printed(bare, tool))],
+      [`${tool} #! of a missing program`, ...given(script, lacking(tool, "#!/nonexistent/interpreter"))],
+      [`${tool} #! of a script whose #! program is missing`, ...given(nested, lacking(tool, `#!${script}`))],
+      [`${tool} #! line ending in a carriage return`, ...given(crlf, lacking(tool, "#!/bin/sh\r"))],
+      [`${tool} #! of itself`, ...given(self, `did not run as ${tool}: the system could not start it: too many symbolic links encountered; its first line is "#!${self}"`)],
+      [`${tool} #! of a file that may not be run`, ...given(put("fileinterp", tool, `#!${at("not-a-program")}\n`), `did not run as ${tool}: the system could not start it: permission denied; its first line is "#!${at("not-a-program")}"`)],
+      [`${tool} #! of a folder`, ...given(put("dirinterp", tool, `#!${root}\n`), `did not run as ${tool}: the system could not start it: permission denied; its first line is "#!${root}"`)],
+      [`${tool} #! of a program env does not find`, ...given(viaEnv, printed(viaEnv, tool))],
+      [`${tool} for Windows`, { ...env, [variable]: put("pe", tool, Buffer.concat([Buffer.from("4d5a90000300000004000000ffff0000b8", "hex"), Buffer.alloc(4096)])) }, shellRead(variable, at("pe", tool), tool)],
+      [`${tool} for macOS`, { ...env, [variable]: put("macho", tool, Buffer.concat([Buffer.from("cffaedfe07000001030000000200000000", "hex"), Buffer.alloc(4096)])) }, shellRead(variable, at("macho", tool), tool)],
+      [`${tool} silent`, ...given(put("silent", tool, "#!/bin/sh\nexit 0\n"), `did not run as ${tool}: it printed nothing and exited with 0`)],
+      [`${tool} saying its version on its error output`, ...given(toError, printed(toError, tool))],
+      [`${tool} stopped by a signal as it is asked`, ...given(term, `did not run as ${tool}: it was stopped by SIGTERM`)],
+      [`${tool} the other tool`, ...given(real[other], printed(real[other], tool))],
+    );
+    // What the program printed names the cause: env the program it did not
+    // find, the shell the program that is not there.
+    assert.match(printed(viaEnv, tool), /^did not run as \w+: it printed "[^"]*nothing-such-program/);
+    assert.match(printed(bare, tool), /^did not run as \w+: it printed "[^"]*\/nonexistent\/bin\/ffmpeg[^"]*" and exited with 127$/);
+    assert.match(printed(real[other], tool), new RegExp(`^did not run as ${tool}: it printed "${other} version `));
+    // Execute bits this user may not use, and a folder this user may not
+    // enter, which hold nothing back from root.
+    if (!root0) {
+      cases.push([`${tool} with execute bits for others only`, ...given(put("others", tool, "#!/bin/sh\n", 0o055), "may not be run by this user")]);
+      put("locked", tool, "#!/bin/sh\n");
+    }
+    // The system's own ffmpeg and ffprobe, an ELF program each, made for
+    // other processors, with a loader that is not there, and needing a
+    // library that is not there, the last also behind a wrapper script:
+    // the loader's own line names the program that cannot start.
+    const program = fs.readFileSync(real[tool]);
+    if (program.readUInt32BE(0) === 0x7f454c46) {
+      const foreign = { x64: 183, arm64: 62 }[process.arch];
+      if (foreign && !handled("7f454c46")) {
+        const made = Buffer.from(program);
+        made.writeUInt16LE(foreign, 18);
+        put("arm", tool, made);
+        cases.push([`${tool} for other processors`, { ...env, [variable]: at("arm", tool) }, shellRead(variable, at("arm", tool), tool)]);
+      }
+      const head = program.toString("latin1", 0, 8192);
+      const loader = /\/lib[\w/.-]*\/ld-[\w.-]+\.so\.\d+/.exec(head);
+      if (loader) {
+        const made = Buffer.from(program);
+        made.write(`${loader[0].slice(0, -1)}${loader[0].endsWith("9") ? "8" : "9"}`, loader.index, "latin1");
+        cases.push([`${tool} with a loader that is not there`, ...given(put("noloader", tool, made), lacking(tool, null))]);
+      }
+      const needed = /libavdevice\.so\.\d+/.exec(program.toString("latin1"));
+      if (needed) {
+        const made = Buffer.from(program);
+        made.write(needed[0].replace("libavdevice", "libavdevicX"), needed.index, "latin1");
+        const missing = put("libmiss", tool, made);
+        const wrapper = put("wrap", tool, `#!/bin/sh\nexec "${missing}" "$@"\n`);
+        assert.match(printed(wrapper, tool), new RegExp(`it printed "${missing.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: error while loading shared libraries: libavdevicX`));
+        cases.push([`${tool} needing a library that is not there`, ...given(missing, printed(missing, tool))], [`${tool} behind a wrapper, needing a library that is not there`, ...given(wrapper, printed(wrapper, tool))]);
+      }
+    }
+  }
+  if (!root0) {
+    fs.chmodSync(at("locked"), 0o000);
+    for (const tool of ["ffmpeg", "ffprobe"]) {
+      const variable = tool === "ffmpeg" ? "FFMPEG_PATH" : "FFPROBE_PATH";
+      cases.push([`${tool} in a folder this user may not enter`, { ...process.env, FFMPEG_PATH: real.ffmpeg, FFPROBE_PATH: real.ffprobe, [variable]: at("locked", tool) }, pointsTo(variable, at("locked", tool), `is in ${at("locked")}, a folder this user may not enter`)]);
+    }
+  }
+  // Named in the other ways: by launch-film's variables, as the ffprobe
+  // next to the ffmpeg given, by a name, found on PATH or not, and on
+  // PATH, where the system passes over a folder, a file it may not run, a
+  // link that leads nowhere and a script whose #! program is not there,
+  // and the first of them is named when no tool comes after them; it stops
+  // at a loop of links, and runs the first file it may run, though a good
+  // one comes after it.
+  const { FFMPEG_PATH, FFPROBE_PATH, LAUNCH_FILM_FFMPEG, LAUNCH_FILM_FFPROBE, PATH, ...rest } = process.env;
+  fs.mkdirSync(at("probe-only"), { recursive: true });
+  fs.symlinkSync(real.ffprobe, at("probe-only", "ffprobe"));
+  fs.mkdirSync(at("ffmpeg-only"), { recursive: true });
+  fs.symlinkSync(real.ffmpeg, at("ffmpeg-only", "ffmpeg"));
+  fs.mkdirSync(at("beside", "ffprobe"), { recursive: true });
+  fs.symlinkSync(real.ffmpeg, at("beside", "ffmpeg"));
+  fs.mkdirSync(at("static", "ffmpeg-7.0.2-amd64-static"), { recursive: true });
+  fs.symlinkSync(real.ffmpeg, at("static", "ffmpeg-7.0.2-amd64-static", "ffmpeg"));
+  const crlf = at("crlf", "ffmpeg");
+  cases.push(
+    ["LAUNCH_FILM_FFMPEG", { ...rest, PATH, LAUNCH_FILM_FFMPEG: at("empty", "ffmpeg"), FFPROBE_PATH: real.ffprobe }, pointsTo("LAUNCH_FILM_FFMPEG", at("empty", "ffmpeg"), "did not run as ffmpeg: it printed nothing and exited with 0")],
+    ["LAUNCH_FILM_FFPROBE", { ...rest, PATH, FFMPEG_PATH: real.ffmpeg, LAUNCH_FILM_FFPROBE: at("folder", "ffprobe") }, pointsTo("LAUNCH_FILM_FFPROBE", at("folder", "ffprobe"), "is a folder")],
+    ["a folder next to the ffmpeg given", { ...rest, PATH, FFMPEG_PATH: at("beside", "ffmpeg") }, `reframekit needs ffmpeg and ffprobe, and the ffprobe next to the ffmpeg FFMPEG_PATH points to, ${at("beside", "ffprobe")}, is a folder. ${toGet.beside}`],
+    ["a static build's folder", { ...rest, PATH, FFMPEG_PATH: at("static", "ffmpeg-7.0.2-amd64-static") }, pointsTo("FFMPEG_PATH", at("static", "ffmpeg-7.0.2-amd64-static"), `is a folder, with ${at("static", "ffmpeg-7.0.2-amd64-static", "ffmpeg")} in it`)],
+    ["a name not on PATH", { ...rest, PATH, FFMPEG_PATH: "ffmpeg-not-there" }, `reframekit needs ffmpeg and ffprobe, and FFMPEG_PATH names ffmpeg-not-there, which is not on your PATH. ${toGet.FFMPEG_PATH}`],
+    ["a name found on PATH whose #! line ends in a carriage return", { ...rest, PATH: `${at("crlf")}:${at("probe-only")}`, FFMPEG_PATH: "ffmpeg" }, `reframekit needs ffmpeg and ffprobe, and the ffmpeg on your PATH that FFMPEG_PATH names, ${crlf}, ${lacking("ffmpeg", "#!/bin/sh\r")}. ${toGet.FFMPEG_PATH}`],
+    ["no ffmpeg on PATH", { ...rest, PATH: at("probe-only") }, `reframekit needs ffmpeg and ffprobe. Install ffmpeg (${INSTALL}), or set FFMPEG_PATH and FFPROBE_PATH to them.`],
+    ["no ffprobe on PATH", { ...rest, PATH: at("ffmpeg-only") }, `reframekit needs ffmpeg and ffprobe, and there is no ffprobe on your PATH. ${toGet.ffprobe}`],
+    ["a folder first on PATH", { ...rest, PATH: `${at("folder")}:${at("probe-only")}` }, onPathIs("ffmpeg", at("folder", "ffmpeg"), "is a folder")],
+    ["a file that may not be run on PATH", { ...rest, PATH: `${at("ffmpeg-only")}:${at("plain")}` }, onPathIs("ffprobe", at("plain", "ffprobe"), "is not executable")],
+    ["a link that leads nowhere on PATH", { ...rest, PATH: `${at("dangling")}:${at("probe-only")}` }, onPathIs("ffmpeg", at("dangling", "ffmpeg"), `is a link to ${at("nowhere", "ffmpeg")}, which is not there`)],
+    ["a #! line ending in a carriage return on PATH", { ...rest, PATH: `${at("crlf")}:${at("probe-only")}` }, onPathIs("ffmpeg", crlf, lacking("ffmpeg", "#!/bin/sh\r"))],
+    ["a #! of a script whose #! program is missing on PATH", { ...rest, PATH: `${at("nested")}:${at("probe-only")}` }, onPathIs("ffmpeg", at("nested", "ffmpeg"), lacking("ffmpeg", `#!${at("badinterp", "ffmpeg")}`))],
+    ["a folder, then a loop of links on PATH", { ...rest, PATH: `${at("folder")}:${at("loop")}:${path.dirname(real.ffmpeg)}` }, onPathIs("ffmpeg", at("loop", "ffmpeg"), "is a link that leads back to itself")],
+    ["a text file first on PATH", { ...rest, PATH: `${at("text")}:${path.dirname(real.ffmpeg)}` }, onPathIs("ffmpeg", at("text", "ffmpeg"), printed(at("text", "ffmpeg")))],
+  );
+  if (fs.existsSync(at("libmiss", "ffmpeg"))) cases.push(["a broken ffmpeg first on PATH, a good one after it", { ...rest, PATH: `${at("libmiss")}:${path.dirname(real.ffmpeg)}` }, onPathIs("ffmpeg", at("libmiss", "ffmpeg"), printed(at("libmiss", "ffmpeg")))]);
+  if (!root0) cases.push(["a folder on PATH this user may not enter", { ...rest, PATH: `${at("locked")}:${at("probe-only")}` }, `reframekit needs ffmpeg and ffprobe, and there is no ffmpeg on your PATH, unless it is in ${at("locked")}, a folder on it that this user may not enter. ${toGet.ffmpeg}`]);
+  // Every case in one of a render, a plan, a check and a run with --json,
+  // in turn, and the first few in all four. The folder this user may not
+  // enter is opened again after, so the test's folder can be removed.
+  try {
+    cases.forEach(([name, env, message], i) => stopsBeforeWork(name.replace(/\W+/g, "-"), env, message, i < 4 ? null : ["render", "plan", "check", "json"][i % 4]));
+  } finally {
+    if (fs.existsSync(at("locked"))) fs.chmodSync(at("locked"), 0o755);
+  }
+  // A good one after a folder, a script whose #! program is not there, or
+  // one whose #! line ends in a carriage return, is the one that runs, as
+  // the system passes over those. A wrapper with no #! line, which the
+  // system gives to /bin/sh, and one whose first words are a warning of
+  // the shell's, answer as ffmpeg does, and run.
+  for (const first of ["folder", "badinterp", "crlf"]) {
+    const r = cli([fixture("twoShots"), "--for", "180x320", "--plan", "--out", outDir(`unstarted-after-${first}`)], { env: { ...rest, PATH: `${at(first)}:${path.dirname(real.ffmpeg)}:${path.dirname(real.ffprobe)}` } });
+    assert.equal(r.status, 0, `${first}: ${r.stderr}`);
+  }
+  const wrappers = { "no-bang": `exec "${real.ffmpeg}" "$@"\n`, warning: `#!/bin/sh\necho "sh: warning: setlocale: LC_ALL: cannot change locale (xx_XX.UTF-8)" >&2\nexec "${real.ffmpeg}" "$@"\n` };
+  for (const [name, body] of Object.entries(wrappers)) {
+    const wrapper = put(`wrapper-${name}`, "ffmpeg", body);
+    const r = cli([fixture("twoShots"), "--for", "180x320", "--out", outDir(`unstarted-wrapper-${name}`), "--json"], { env: { ...rest, PATH, FFMPEG_PATH: wrapper, FFPROBE_PATH: real.ffprobe } });
+    assert.equal(r.status, 0, `${name}: ${r.stderr}`);
+    assert.equal(JSON.parse(r.stdout).files.length, 1, name);
+  }
+});
+
+test("an ffmpeg or an ffprobe that gives no answer when asked its version is stopped and named once the time is up", { skip: process.platform === "win32" }, () => {
+  const { find, ffmpegSource } = require("../skills/reframekit/scripts/lib/tools");
+  const standIn = path.join(outDir("no-answer"), "ffmpeg");
+  fs.mkdirSync(path.dirname(standIn), { recursive: true });
+  fs.writeFileSync(standIn, "#!/bin/sh\nexec sleep 30\n");
+  fs.chmodSync(standIn, 0o755);
+  const was = process.env.FFMPEG_PATH;
+  process.env.FFMPEG_PATH = standIn;
+  const began = Date.now();
+  try {
+    assert.throws(() => find(ffmpegSource(), () => {}, 500), (err) => {
+      assert.equal(err.message, pointsTo("FFMPEG_PATH", standIn, "did not run as ffmpeg: it gave no answer in 0.5 s"));
+      assert.ok(err.unstarted);
+      return true;
+    });
+  } finally {
+    if (was === undefined) delete process.env.FFMPEG_PATH;
+    else process.env.FFMPEG_PATH = was;
+  }
+  assert.ok(Date.now() - began < 10000, `${Date.now() - began} ms`);
+});
+
+test("a line a program printed is quoted as it is, its control characters written out, and a long one keeps its start and its end", () => {
+  const { quoted } = require("../skills/reframekit/scripts/lib/tools");
+  assert.equal(quoted("#!/bin/sh\r"), '"#!/bin/sh\\r"');
+  assert.equal(quoted("a\tb\x1b[31mc\x7f\u0085﻿d‮"), '"a\\tb\\x1b[31mc\\x7f\\x85\\ufeffd\\u202e"');
+  assert.equal(quoted("env: ‘runner’: No such file or directory"), '"env: ‘runner’: No such file or directory"');
+  const long = `${"a".repeat(150)}${"b".repeat(100)}`;
+  assert.equal(quoted(long), `"${"a".repeat(120)}...${"b".repeat(80)}"`);
+  assert.equal(quoted("x".repeat(200)), `"${"x".repeat(200)}"`);
+});
+
+test("an ffmpeg on a mount where no program may be run (noexec) is named so before any work", { skip: process.platform !== "linux" ? "it takes Linux's mount namespaces" : false }, (t) => {
+  // A tmpfs mounted noexec in a mount namespace of a user namespace of its
+  // own, where this user may mount one, with a copy of the tool in it, as
+  // large as a static build may be.
+  const mount = outDir("noexec");
+  fs.mkdirSync(mount, { recursive: true });
+  const can = spawnSync("unshare", ["-rm", "sh", "-c", 'mount -t tmpfs -o noexec tmpfs "$0"', mount], { encoding: "utf8" });
+  if (can.error || can.status !== 0) return t.skip(`no mount namespace here: ${(can.stderr || String(can.error)).trim()}`);
+  const script = 'mount -t tmpfs -o noexec,size=1g tmpfs "$1" && cp "$2" "$1/$3" && chmod 755 "$1/$3" && shift 3 && exec "$@"';
+  for (const [tool, variable] of [["ffmpeg", "FFMPEG_PATH"], ["ffprobe", "FFPROBE_PATH"]]) {
+    for (const mode of ["plan", "check"]) {
+      const folder = outDir(`noexec-${tool}-${mode}`);
+      const args = mode === "check" ? ["check", fixture("twoShots"), "--for", "youtube"] : [fixture("twoShots"), "--for", "180x320", "--plan"];
+      const env = { ...process.env, FFMPEG_PATH: realTool("ffmpeg"), FFPROBE_PATH: realTool("ffprobe"), [variable]: path.join(mount, tool) };
+      const r = spawnSync("unshare", ["-rm", "sh", "-c", script, "sh", mount, realTool(tool), tool, process.execPath, CLI, ...args, "--out", folder], { encoding: "utf8", env });
+      assert.equal(r.status, 1, `${tool} ${mode}: ${r.stderr}`);
+      assert.equal(r.stderr, `reframekit: ${pointsTo(variable, path.join(mount, tool), `is on ${fs.realpathSync(mount)}, a mount where no program may be run (noexec)`)}\n`, `${tool} ${mode}`);
+      assert.ok(!fs.existsSync(folder), `${tool} ${mode}`);
+    }
+  }
+});
+
+test("a run with no file descriptor left to start ffmpeg with says so before any work, in plain words", { skip: process.platform === "win32" ? "it takes sh to lower the limit" : false }, () => {
+  // A node whose modules are loaded, holding every file descriptor it may
+  // open but one, too few for ffmpeg's pipes.
+  const hold = path.join(dir, "hold-descriptors.js");
+  const lib = path.join(__dirname, "..", "skills", "reframekit", "scripts", "lib");
+  fs.writeFileSync(hold, `"use strict";
+const fs = require("node:fs");
+for (const name of ["reframe", "check", "ffmpeg", "folder", "tools"]) require(${JSON.stringify(lib)} + "/" + name);
+const held = [];
+try {
+  for (;;) held.push(fs.openSync(__filename, "r"));
+} catch {}
+fs.closeSync(held.pop());
+`);
+  for (const args of [[fixture("twoShots"), "--for", "180x320"], ["check", fixture("twoShots"), "--for", "youtube"]]) {
+    const out = outDir(`no-descriptors-${args[0] === "check" ? "check" : "render"}`);
+    const r = spawnSync("sh", ["-c", 'ulimit -n 256 && exec "$@"', "sh", process.execPath, "--require", hold, CLI, ...args, "--out", out], { encoding: "utf8" });
+    assert.equal(r.status, 1, r.stderr);
+    assert.equal(r.stderr, "reframekit: reframekit could not start ffmpeg, as this process has as many files open as it may (too many open files). Raise that limit, as ulimit -n does, and run it again.\n");
+    assert.ok(!fs.existsSync(out));
+  }
+});
+
+test("an ffmpeg run that cannot start for want of file descriptors once the run is under way fails in plain words, not on the pipe Node did not make", { skip: process.platform === "win32" ? "it takes sh to lower the limit" : false }, () => {
+  // A node holding every file descriptor it may open but one, too few for
+  // ffmpeg's pipes, that starts ffmpeg as a run does part way.
+  const lib = path.join(__dirname, "..", "skills", "reframekit", "scripts", "lib", "ffmpeg");
+  const script = `
+    const fs = require("node:fs");
+    const { run } = require(${JSON.stringify(lib)});
+    const held = [];
+    try {
+      for (;;) held.push(fs.openSync(${JSON.stringify(__filename)}, "r"));
+    } catch {}
+    fs.closeSync(held.pop());
+    run(["-version"]).then(() => console.log("ran"), (err) => console.log(err.message));
+  `;
+  const r = spawnSync("sh", ["-c", 'ulimit -n 256 && exec "$0" -e "$1"', process.execPath, script], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, "reframekit could not start ffmpeg, as this process has as many files open as it may (too many open files). Raise that limit, as ulimit -n does, and run it again.\n");
+});
+
+test("an ffmpeg that answered before any work and can no longer be started part way is named by its path with what the system said, and a start in a work folder that is gone is that folder's", { skip: process.platform === "win32" }, async () => {
+  // A wrapper that answers what it is and has, then takes itself away as
+  // the run reads the picture.
+  const bin = outDir("gone-bin");
+  fs.mkdirSync(bin, { recursive: true });
+  const wrapper = path.join(bin, "ffmpeg");
+  fs.writeFileSync(wrapper, `#!/bin/sh\ncase "$*" in *-version*|*-filters*|*-encoders*) exec "${realTool("ffmpeg")}" "$@";; esac\nrm -f "$0"\nexec "${realTool("ffmpeg")}" "$@"\n`);
+  fs.chmodSync(wrapper, 0o755);
+  const env = { ...process.env, FFMPEG_PATH: wrapper, FFPROBE_PATH: realTool("ffprobe") };
+  const out = outDir("gone-out");
+  const r = cli([fixture("twoShots"), "--for", "180x320", "--plan", "--out", out], { env });
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, new RegExp(`(^|\\n)reframekit: reframekit could not start ffmpeg, ${wrapper.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}, again: no such file or directory\\.\\n$`));
+  assert.ok(!fs.existsSync(out));
+  const next = cli([fixture("twoShots"), "--for", "180x320", "--plan", "--out", out], { env });
+  assert.equal(next.status, 1);
+  assert.equal(next.stderr, `reframekit: ${pointsTo("FFMPEG_PATH", wrapper, "is not there")}\n`);
+  assert.ok(!fs.existsSync(out));
+  // In this process: one asked before, then taken away.
+  const { run, checkTools } = require("../skills/reframekit/scripts/lib/ffmpeg");
+  const standIn = path.join(bin, "stand-in");
+  fs.symlinkSync(realTool("ffmpeg"), standIn);
+  const was = { FFMPEG_PATH: process.env.FFMPEG_PATH, FFPROBE_PATH: process.env.FFPROBE_PATH };
+  Object.assign(process.env, { FFMPEG_PATH: standIn, FFPROBE_PATH: realTool("ffprobe") });
+  try {
+    checkTools();
+    fs.rmSync(standIn);
+    await assert.rejects(run(["-version"]), (err) => {
+      assert.equal(err.message, `reframekit could not start ffmpeg, ${standIn}, again: no such file or directory.`);
+      assert.ok(err.unstarted);
+      return true;
+    });
+    await assert.rejects(run(["-version"], { cwd: path.join(bin, "no-such-folder") }), { message: `Cannot start stand-in in ${path.join(bin, "no-such-folder")}: the folder is gone or may not be entered` });
+  } finally {
+    for (const [name, value] of Object.entries(was)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
 });
 
@@ -849,6 +1271,36 @@ test("an ffmpeg named by a path from the folder the run is started in, as ../bin
     const calls = fs.readFileSync(log, "utf8").split("\n").filter(Boolean);
     assert.ok(calls.filter((c) => c === "ffmpeg").length > 2 && calls.includes("ffprobe"), `${name}: ${calls.join(" ")}`);
   }
+});
+
+test("an ffmpeg named by a name on PATH, with no folder in it, runs with the ffprobe on PATH, never with a file named like its ffprobe in the folder the run is started in", { skip: process.platform === "win32" }, () => {
+  const top = outDir("named-tools");
+  const bin = path.join(top, "bin");
+  const started = path.join(top, "here");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(started, { recursive: true });
+  fs.symlinkSync(fs.realpathSync(spawnSync("sh", ["-c", "command -v ffmpeg"], { encoding: "utf8" }).stdout.trim()), path.join(bin, "ffmpeg-named"));
+  // A file named as the ffprobe next to ffmpeg-named would be, where the
+  // run is started: no folder of PATH holds it.
+  fs.writeFileSync(path.join(started, "ffprobe-named"), "not a program\n");
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, FFMPEG_PATH: "ffmpeg-named" };
+  for (const name of ["FFPROBE_PATH", "LAUNCH_FILM_FFMPEG", "LAUNCH_FILM_FFPROBE"]) delete env[name];
+  const r = cli([fixture("twoShots"), "--for", "180x320", "--plan", "--out", "planned"], { cwd: started, env });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(started, "planned", "crop.json")));
+});
+
+test("an ffmpeg and an ffprobe found through an entry of PATH that is relative run for every run of the kit, those that start in its work folder too", { skip: process.platform === "win32" }, () => {
+  const top = outDir("relative-path");
+  fs.mkdirSync(path.join(top, "bin"), { recursive: true });
+  for (const tool of ["ffmpeg", "ffprobe"]) fs.symlinkSync(realTool(tool), path.join(top, "bin", tool));
+  // bin, read from the folder the run is started in, and nothing else, so
+  // a run in the work folder finds no ffmpeg by that entry.
+  const env = { ...process.env, PATH: "bin" };
+  for (const name of ["FFMPEG_PATH", "FFPROBE_PATH", "LAUNCH_FILM_FFMPEG", "LAUNCH_FILM_FFPROBE"]) delete env[name];
+  const r = cli([fixture("twoShots"), "--for", "180x320", "--plan", "--out", "planned"], { cwd: top, env });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(top, "planned", "sheet.png")));
 });
 
 test("an ffmpeg killed half way is said to have been killed, not to have failed on the last stream it read", { skip: process.platform === "win32" }, () => {

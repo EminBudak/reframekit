@@ -10,34 +10,54 @@ const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const { WHY, SIGNALS } = require("./folder");
 const { layoutOf, cutText } = require("./mp4");
+// Which ffmpeg and ffprobe a run starts (FFMPEG_PATH, FFPROBE_PATH, the
+// LAUNCH_FILM_ names, PATH), found and asked their versions before any
+// work, and what a run says of one it cannot start. ASK is the longest a
+// run of either may take that only says what it is or what it has
+// (-version, -filters, -encoders).
+const { MISSING, ASK, SHORT, ffmpegSource, ffprobeSource, find, again } = require("./tools");
 
-const MISSING = "reframekit needs ffmpeg and ffprobe. Install ffmpeg (brew install ffmpeg, sudo apt install ffmpeg or winget install ffmpeg), or set FFMPEG_PATH and FFPROBE_PATH to them.";
+// What checkTools() found, for the variables, the PATH and the folder the
+// run was started in that it found it with: every later run of ffmpeg and
+// ffprobe starts the very files that answered, by their paths.
+let checked = null;
 
-// A tool a variable names: a path, as ../bin/ffmpeg, from the folder the
-// run was started in, since most of the kit's ffmpeg runs start in its
-// work folder, where a path relative to another folder leads nowhere; a
-// bare name, as ffmpeg-8, as it is, for PATH to find. A path is a name
-// with a slash in it, or on Windows a backslash too, as the system reads
-// it there.
-const located = (name) => (name && (process.platform === "win32" ? /[\\/]/ : /\//).test(name) ? path.resolve(name) : name);
-
-// FFMPEG_PATH, else LAUNCH_FILM_FFMPEG (the name launch-film and makersmcp
-// pass an ffmpeg by), else the one on PATH.
-function ffmpegPath() {
-  return located(process.env.FFMPEG_PATH || process.env.LAUNCH_FILM_FFMPEG) || "ffmpeg";
-}
-
-// FFPROBE_PATH, else LAUNCH_FILM_FFPROBE, else the ffprobe next to the
-// ffmpeg named, else the one on PATH.
-function ffprobePath() {
-  if (process.env.FFPROBE_PATH) return located(process.env.FFPROBE_PATH);
-  if (process.env.LAUNCH_FILM_FFPROBE) return located(process.env.LAUNCH_FILM_FFPROBE);
-  const ff = located(process.env.FFMPEG_PATH || process.env.LAUNCH_FILM_FFMPEG);
-  if (ff) {
-    const next = path.join(path.dirname(ff), path.basename(ff).replace(/ffmpeg/i, "ffprobe"));
-    if (next !== ff && fs.existsSync(next)) return next;
+const VARIABLES = ["FFMPEG_PATH", "LAUNCH_FILM_FFMPEG", "FFPROBE_PATH", "LAUNCH_FILM_FFPROBE"];
+function toolsKey() {
+  let here = "";
+  try {
+    here = process.cwd();
+  } catch {
+    // A folder taken away since: only a relative path reads from it.
   }
-  return "ffprobe";
+  const pathKey = Object.keys(process.env).find((k) => (process.platform === "win32" ? k.toUpperCase() === "PATH" : k === "PATH"));
+  return JSON.stringify([...VARIABLES.map((name) => process.env[name]), pathKey ? process.env[pathKey] : null, here]);
+}
+const found = () => (checked && checked.key === toolsKey() ? checked : null);
+
+// The ffmpeg and the ffprobe every run starts: the files checkTools()
+// found, or, before it has, the program as the variables or PATH give it.
+const ffmpegPath = () => (found() ? checked.ffmpeg : ffmpegSource().program);
+const ffprobePath = () => (found() ? checked.ffprobe : ffprobeSource().program);
+
+// Which of the two a program the run starts is: every run of ffprobe
+// starts ffprobePath().
+const toolOf = (program) => (program === ffprobePath() ? "ffprobe" : "ffmpeg");
+
+// The error for a program the system could not start (`err`): one that
+// answered before any work, as every run's has, in the words of tools.js
+// again(); one not asked yet, as when this module is used on its own, as
+// checkTools() would tell of it, or else in those words.
+function startFailed(program, err) {
+  const tool = toolOf(program);
+  if (!found() && !Object.hasOwn(SHORT, err.code)) {
+    try {
+      find(tool === "ffprobe" ? ffprobeSource() : ffmpegSource());
+    } catch (told) {
+      return told;
+    }
+  }
+  return again(tool, program, err, Boolean(found()));
 }
 
 // With REFRAMEKIT_DEBUG set, every ffmpeg and ffprobe run is shown on
@@ -64,13 +84,7 @@ function debug(tool, args) {
 const FILTERS = ["scdet", "cropdetect", "metadata", "sendcmd", "crop", "scale", "color", "overlay", "gblur", "eq", "fps", "tpad", "trim", "fade", "split", "setsar", "setparams", "setpts", "format", "bwdif", "loudnorm", "ebur128", "aresample", "aformat", "afade", "atrim", "asetpts", "volume"];
 const GPL_ONLY = new Set(["cropdetect", "eq"]);
 
-let checked = null;
-
 const lastLine = (text) => String(text || "").trim().split("\n").filter(Boolean).pop() || "";
-
-// The longest a run of ffmpeg or ffprobe may take that only says what it
-// is or what it has (-version, -filters, -encoders).
-const ASK = 60_000;
 
 // Whether a signal, by its name or its number, is one that stops a run
 // (folder.js SIGNALS), as Ctrl-C and whatever runs the kit send.
@@ -104,19 +118,20 @@ const endedBy = (signal, when = "") => {
 };
 
 // Why a run of ffmpeg or ffprobe (`tool`) that spawnSync made (`r`) did
-// not answer, as an error: the tool is not there (MISSING), it did not
-// answer within `limit` ms, as on a machine too busy, or what else
-// stopped it. `doing` says when, as "when asked which version it is" or
-// "while it read film.mp4". One that a signal that stops a run ended
-// carries it (`stopped`), and is never a reason of the file it read: a
-// check stops on it rather than failing that file's row. One that
-// crashed, or that the system killed, carries none.
+// not answer, as an error: the system could not start it again (tools.js
+// again()), it did not answer within `limit` ms, as on a machine too busy,
+// it said more than is taken in, or what else stopped it. `doing` says
+// when, as "when asked to list its filters" or "while it read film.mp4".
+// One that a signal that stops a run ended carries it (`stopped`), and is
+// never a reason of the file it read: a check stops on it rather than
+// failing that file's row. One that crashed, or that the system killed,
+// carries none.
 function unanswered(tool, r, limit, doing = "") {
   const code = r.error && r.error.code;
   const when = doing ? ` ${doing}` : "";
-  if (code === "ENOENT") return new Error(MISSING);
   if (code === "ETIMEDOUT") return new Error(`${tool} did not answer within ${Math.round(limit / 1000)} s${when}: the machine may be too busy. Run reframekit again when the machine is less busy.`);
-  if (r.error) return new Error(`${tool} could not be run: ${WHY[code] || r.error.message}`);
+  if (code === "ENOBUFS") return new Error(`${tool} said more than reframekit takes in${when}`);
+  if (r.error) return startFailed(tool, r.error);
   if (r.signal) {
     const err = new Error(`${tool} ${endedBy(r.signal, when)}`);
     if (!stops(r.signal)) return err;
@@ -136,22 +151,32 @@ function ask(tool, args, doing) {
   return String(r.stdout || "");
 }
 
-// Both tools answer and have the filters, or the run stops before any work
-// with what is missing, or with why one did not answer.
+// Both tools start, answer as ffmpeg and ffprobe do and ffmpeg has the
+// filters, or the run stops before any work with what is missing, or with
+// the tool's path and what the system or the tool said (tools.js find()).
+// A tool that a signal that stops a run ended as it was asked, as when the
+// whole process group is stopped, gives that signal a moment to come
+// (stoppedLately()).
 function checkTools() {
-  if (checked) return checked;
+  if (found()) return checked;
+  const key = toolsKey();
+  const tools = [];
+  for (const source of [ffmpegSource(), ffprobeSource()]) {
+    try {
+      tools.push(find(source, debug));
+    } catch (err) {
+      if (stops(err.signal)) {
+        signaled = Date.now();
+        err.stopped = err.signal;
+      }
+      throw err;
+    }
+  }
+  const [ffmpeg, ffprobe] = tools;
   // What ffmpeg says of its version, "ffmpeg version 8.0.1 ...", as
   // -version says it after -hide_banner too.
-  let said = "";
-  for (const tool of [ffmpegPath(), ffprobePath()]) {
-    debug(tool, ["-hide_banner", "-version"]);
-    const r = spawnSync(tool, ["-hide_banner", "-version"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: ASK });
-    if (r.error || r.signal) throw unanswered(tool, r, ASK, "when asked which version it is");
-    // A program that runs but is no ffmpeg, or a broken one.
-    if (r.status !== 0) throw new Error(`${unanswered(tool, r, ASK, "when asked which version it is").message}. ${MISSING}`);
-    if (!said) said = String(r.stdout || "");
-  }
-  const listed = new Set(ask(ffmpegPath(), ["-hide_banner", "-filters"], "when asked to list its filters").split("\n").map((line) => (/^\s*[A-Z.|]{2,3}\s+(\S+)\s/.exec(line) || [])[1]).filter(Boolean));
+  const said = ffmpeg.said;
+  const listed = new Set(ask(ffmpeg.file, ["-hide_banner", "-filters"], "when asked to list its filters").split("\n").map((line) => (/^\s*[A-Z.|]{2,3}\s+(\S+)\s/.exec(line) || [])[1]).filter(Boolean));
   const absent = FILTERS.filter((name) => !listed.has(name));
   if (absent.length) {
     const lacks = `This ffmpeg lacks the ${absent.join(", ")} filter${absent.length > 1 ? "s" : ""}`;
@@ -166,7 +191,7 @@ function checkTools() {
     throw new Error(`${lacks}. Install a ${kind} build of ffmpeg (4.4 or later)${gpl ? ", made with --enable-gpl," : ""} or point FFMPEG_PATH at one.`);
   }
   const version = /ffmpeg version (\S+)/.exec(said);
-  checked = { ffmpeg: ffmpegPath(), ffprobe: ffprobePath(), version: version ? version[1] : "unknown" };
+  checked = { key, ffmpeg: ffmpeg.file, ffprobe: ffprobe.file, version: version ? version[1] : "unknown" };
   return checked;
 }
 
@@ -237,6 +262,16 @@ function failure(stderr, { telling = false } = {}) {
   return (telling && said.filter((l) => /error|invalid|failed|cannot|no such|not/i.test(l)).pop()) || said.pop() || "";
 }
 
+// Whether a run of ffmpeg can start in a folder.
+function enterable(folder) {
+  try {
+    fs.accessSync(folder, fs.constants.X_OK);
+    return fs.statSync(folder).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 // The ffmpeg runs going on, so a run that is stopped can stop them too.
 const running = new Set();
 
@@ -253,14 +288,33 @@ function stopAll() {
 function run(args, { cwd, timeout = 0, onLine, onStdout, collect = false, keep = 200_000, tool = ffmpegPath() } = {}) {
   return new Promise((resolve, reject) => {
     let child;
+    let timer = null;
     debug(tool, args);
+    // A tool that cannot be started now fails in the words tools.js gives
+    // it, whether Node throws the error, as for a script whose #! line
+    // leads back to itself, or gives it a moment later. A start that fails
+    // for want of the folder it was to run in is that folder's, not the
+    // tool's.
+    const failed = (err) => {
+      if (!/^spawn/.test(err.syscall || "")) return reject(err);
+      if (cwd && !enterable(cwd)) return reject(new Error(`Cannot start ${path.basename(tool)} in ${cwd}: the folder is gone or may not be entered`));
+      reject(startFailed(tool, err));
+    };
     try {
       child = spawn(tool, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
     } catch (err) {
-      reject(err.code === "ENOENT" ? new Error(MISSING) : err);
+      failed(err);
       return;
     }
     running.add(child);
+    child.on("error", (err) => {
+      running.delete(child);
+      if (timer) clearTimeout(timer);
+      failed(err);
+    });
+    // With no file descriptor left Node makes no pipes, and gives the
+    // error a moment later.
+    if (!child.stdout || !child.stderr) return;
     const out = [];
     let stderr = "";
     let partial = "";
@@ -276,16 +330,10 @@ function run(args, { cwd, timeout = 0, onLine, onStdout, collect = false, keep =
       partial = lines.pop();
       for (const line of lines) onLine(line);
     });
-    let timer = null;
     if (timeout) {
       timer = setTimeout(() => child.kill("SIGKILL"), timeout);
       timer.unref();
     }
-    child.on("error", (err) => {
-      running.delete(child);
-      if (timer) clearTimeout(timer);
-      reject(err.code === "ENOENT" ? new Error(MISSING) : err);
-    });
     child.on("close", (code, signal) => {
       running.delete(child);
       if (timer) clearTimeout(timer);
