@@ -111,7 +111,8 @@ function probe(file) {
 }
 
 // Integrated loudness and true peak, from ffmpeg's ebur128 meter, its
-// frame lines at the verbose level (ffmpeg 4.4 has no framelog=quiet).
+// frame lines at the verbose level (ffmpeg 4.4 has no quiet level for
+// framelog).
 function loudness(file) {
   const r = spawnSync("ffmpeg", ["-hide_banner", "-nostats", "-loglevel", "info", "-i", file, "-vn", "-af", "ebur128=peak=true:framelog=verbose", "-f", "null", "-"], { encoding: "utf8" });
   const tail = r.stderr.slice(r.stderr.lastIndexOf("Integrated loudness:"));

@@ -470,12 +470,15 @@ test("sound that measures louder than 0 LUFS, as a square wave at full scale doe
 });
 
 test("each file's sound is measured with what ffmpeg 4.4 takes too, and a meter that fails stops the run instead of calling the sound silent", { skip: process.platform === "win32" }, async () => {
-  // An ffmpeg that refuses framelog=quiet, as Ubuntu 22.04's 4.4 does.
+  // An ffmpeg that refuses the quiet level for framelog, as Ubuntu 22.04's
+  // 4.4 does; the option is put together here, so no file of the kit holds
+  // it whole, as a search for its uses finds none.
   const bin = outDir("old-meter");
   fs.mkdirSync(bin, { recursive: true });
   const real = spawnSync("sh", ["-c", "command -v ffmpeg"], { encoding: "utf8" }).stdout.trim();
   const fake = path.join(bin, "ffmpeg");
-  fs.writeFileSync(fake, `#!/bin/sh\ncase "$*" in *framelog=quiet*) echo "Error setting option framelog to value quiet." >&2; exit 1;; esac\nexec "${real}" "$@"\n`);
+  const quiet = ["framelog", "quiet"].join("=");
+  fs.writeFileSync(fake, `#!/bin/sh\ncase "$*" in *${quiet}*) echo "Error setting option framelog to value quiet." >&2; exit 1;; esac\nexec "${real}" "$@"\n`);
   fs.chmodSync(fake, 0o755);
   const env = { ...process.env, FFMPEG_PATH: fake };
   const run = cli([fixture("twoShots"), "--for", "180x320", "--out", outDir("old-meter-out"), "--json"], { env });

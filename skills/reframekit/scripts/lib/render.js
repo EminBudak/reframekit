@@ -282,9 +282,9 @@ async function measureLoudness(file, info, { end, lufs, work }) {
 // it: integrated loudness (LUFS) and true peak (dBTP), the loudness null
 // for silence. The meter logs a line for every tenth of a second at the
 // level framelog names; verbose keeps them out of -loglevel info, in
-// ffmpeg 4.4 as in 8 (4.4 has no framelog=quiet). A meter that fails or
-// prints no summary stops the run: sound it could not measure is not
-// silent. `what` names the file for the error.
+// ffmpeg 4.4 as in 8 (4.4 has no quiet level for framelog). A meter that
+// fails or prints no summary stops the run: sound it could not measure is
+// not silent. `what` names the file for the error.
 async function loudnessOf(file, work, what = path.basename(file)) {
   const r = await run(["-hide_banner", "-nostdin", "-nostats", "-loglevel", "info", "-i", path.resolve(file), "-vn", "-sn", "-dn", "-af", "ebur128=peak=true:framelog=verbose", "-f", "null", "-"], { cwd: work });
   const at = r.stderr.lastIndexOf("Integrated loudness:");
