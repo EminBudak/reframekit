@@ -299,6 +299,17 @@ function quoted(line) {
   return `"${shown.join("")}"`;
 }
 
+// A line the program at `file` printed, as a message gives it after "it
+// printed": quoted(), but a line longer than 200 characters that starts
+// with that file's path and a colon, as the loader and a shell start
+// theirs, is given from after that path, which the message names already,
+// so the limit does not cut into why it failed.
+function printedBy(line, file) {
+  const own = `${file}: `;
+  if (Array.from(line).length > 200 && line.startsWith(own)) return `its path and then ${quoted(line.slice(own.length))}`;
+  return quoted(line);
+}
+
 // The first line with anything in it of what a program printed, or null.
 const firstLine = (text) =>
   String(text || "")
@@ -357,22 +368,22 @@ function unstartable(file, err) {
 const ASK = 60_000;
 const MAX = 1024 * 1024;
 
-// What a program that ran when asked its version and did not answer as
-// the tool does did (`r`, from spawnSync): the first line it printed, on
-// its error output, where a program says what is wrong, else on its
-// output, then how it ended. The tool prints its version on its output,
-// so a program that ended well printing only on its error output is said
-// to.
-function answered(r) {
+// What the program at `file` did when it ran, asked its version, and did
+// not answer as the tool does (`r`, from spawnSync): the first line it
+// printed, on its error output, where a program says what is wrong, else
+// on its output, then how it ended. The tool prints its version on its
+// output, so a program that ended well printing only on its error output
+// is said to.
+function answered(r, file) {
   const out = firstLine(r.stdout);
   const err = firstLine(r.stderr);
   if (r.error && r.error.code === "ENOBUFS") {
     const line = err || out;
-    return line ? `it printed ${quoted(line)} and went on past ${MAX / 1024 / 1024} MB, so it was stopped` : `it printed more than ${MAX / 1024 / 1024} MB with no line of text in it, so it was stopped`;
+    return line ? `it printed ${printedBy(line, file)} and went on past ${MAX / 1024 / 1024} MB, so it was stopped` : `it printed more than ${MAX / 1024 / 1024} MB with no line of text in it, so it was stopped`;
   }
   const ended = r.signal ? `was stopped by ${r.signal}` : `exited with ${r.status}`;
-  if (err && r.status === 0 && !out) return `it printed ${quoted(err)} on its error output, nothing on its output, and exited with 0`;
-  if (err || out) return `it printed ${quoted(err || out)} and ${ended}`;
+  if (err && r.status === 0 && !out) return `it printed ${printedBy(err, file)} on its error output, nothing on its output, and exited with 0`;
+  if (err || out) return `it printed ${printedBy(err || out, file)} and ${ended}`;
   return r.signal ? `it was stopped by ${r.signal}` : `it printed nothing and exited with ${r.status}`;
 }
 
@@ -456,7 +467,7 @@ function find(source, show = () => {}, limit = ASK) {
       if (err && Object.hasOwn(SHORT, codeOf(err))) throw short(tool, err);
       if (!err && r.error && r.error.code === "ETIMEDOUT") throw late(tool, place.file, limit);
       if (!r.error && r.status === 0 && new RegExp(`^${tool} version `, "m").test(r.stdout)) return { file: place.file, source, said: String(r.stdout) };
-      seen = { on: err && PASSED.has(codeOf(err)) ? "passes" : "stops", words: `did not run as ${tool}: ${err ? unstartable(place.file, err) : answered(r)}`, signal: r.error ? null : r.signal };
+      seen = { on: err && PASSED.has(codeOf(err)) ? "passes" : "stops", words: `did not run as ${tool}: ${err ? unstartable(place.file, err) : answered(r, place.file)}`, signal: r.error ? null : r.signal };
     } else if (seen.folder && source.variable && isPath(source.program)) {
       // A folder that holds the tool, as a static build's folder does.
       const inner = path.join(place.file, windows ? `${tool}.exe` : tool);
@@ -482,4 +493,4 @@ function again(tool, file, err, before = true) {
   return unusable(`reframekit could not start ${tool}, ${file}${before ? ", again" : ""}: ${worded(err)}.`);
 }
 
-module.exports = { INSTALL, MISSING, ASK, isPath, located, ffmpegSource, ffprobeSource, places, barred, quoted, find, again, short, SHORT };
+module.exports = { INSTALL, MISSING, ASK, isPath, located, ffmpegSource, ffprobeSource, places, barred, quoted, printedBy, find, again, short, SHORT };

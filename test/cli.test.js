@@ -545,13 +545,13 @@ const onPathIs = (tool, file, what) => `reframekit needs ffmpeg and ffprobe, and
 // else on its output, in quotes, and how it ended, as the test sees it run
 // the same way.
 function printed(file, tool = "ffmpeg") {
-  const { quoted } = require("../skills/reframekit/scripts/lib/tools");
+  const { printedBy } = require("../skills/reframekit/scripts/lib/tools");
   const r = spawnSync(file, ["-hide_banner", "-version"], { encoding: "utf8" });
   const first = (text) => String(text || "").split(/\r?\n/).find((line) => line.trim());
   const line = first(r.stderr);
-  if (line && r.status === 0 && !first(r.stdout)) return `did not run as ${tool}: it printed ${quoted(line)} on its error output, nothing on its output, and exited with 0`;
+  if (line && r.status === 0 && !first(r.stdout)) return `did not run as ${tool}: it printed ${printedBy(line, file)} on its error output, nothing on its output, and exited with 0`;
   const ended = r.signal ? `was stopped by ${r.signal}` : `exited with ${r.status}`;
-  if (line || first(r.stdout)) return `did not run as ${tool}: it printed ${quoted(line || first(r.stdout))} and ${ended}`;
+  if (line || first(r.stdout)) return `did not run as ${tool}: it printed ${printedBy(line || first(r.stdout), file)} and ${ended}`;
   return `did not run as ${tool}: ${r.signal ? `it was stopped by ${r.signal}` : `it printed nothing and exited with ${r.status}`}`;
 }
 
@@ -942,6 +942,30 @@ test("a line a program printed is quoted as it is, its control characters writte
   const long = `${"a".repeat(150)}${"b".repeat(100)}`;
   assert.equal(quoted(long), `"${"a".repeat(120)}...${"b".repeat(80)}"`);
   assert.equal(quoted("x".repeat(200)), `"${"x".repeat(200)}"`);
+});
+
+test("a line over 200 characters that starts with the program's own path, as the loader's and a shell's do, is given from after that path, which the message names already, so the limit leaves why it failed whole", { skip: process.platform === "win32" }, () => {
+  const { printedBy } = require("../skills/reframekit/scripts/lib/tools");
+  // A stand-in for an ffmpeg made for another system, in a folder of a
+  // long name, that says what the loader says of it and exits as it does.
+  const folder = outDir(path.join("long-path", `a-folder-whose-name-is-long-enough-to-take-the-line-the-loader-prints-past-two-hundred-characters`, "ff44"));
+  fs.mkdirSync(folder, { recursive: true });
+  const tool = path.join(folder, "ffmpeg");
+  const why = "error while loading shared libraries: libavdevice.so.58: cannot open shared object file: No such file or directory";
+  fs.writeFileSync(tool, `#!/bin/sh\necho "$0: ${why}" >&2\nexit 127\n`);
+  fs.chmodSync(tool, 0o755);
+  assert.ok(`${tool}: ${why}`.length > 200);
+  const r = cli([fixture("twoShots"), "--for", "180x320", "--plan", "--out", outDir("long-path-out")], { env: { ...process.env, FFMPEG_PATH: tool, FFPROBE_PATH: realTool("ffprobe") } });
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.stderr, `reframekit: reframekit needs ffmpeg and ffprobe, and FFMPEG_PATH points to ${tool}, which did not run as ffmpeg: it printed its path and then "${why}" and exited with 127. Set FFMPEG_PATH to an ffmpeg that runs, or unset it and install one (brew install ffmpeg, sudo apt install ffmpeg or winget install ffmpeg).\n`);
+  // A line of 200 characters or less is quoted whole, its path too, and a
+  // long one that starts otherwise keeps its start and its end.
+  assert.equal(printedBy(`/opt/ff/ffmpeg: ${why}`, "/opt/ff/ffmpeg"), `"/opt/ff/ffmpeg: ${why}"`);
+  const other = `${"a".repeat(150)}${"b".repeat(100)}`;
+  assert.equal(printedBy(other, tool), `"${"a".repeat(120)}...${"b".repeat(80)}"`);
+  // Past the path, a line still over 200 characters is cut as any other.
+  const longer = `${tool}: ${"c".repeat(150)}${"d".repeat(100)}`;
+  assert.equal(printedBy(longer, tool), `its path and then "${"c".repeat(120)}...${"d".repeat(80)}"`);
 });
 
 test("an ffmpeg on a mount where no program may be run (noexec) is named so before any work", { skip: process.platform !== "linux" ? "it takes Linux's mount namespaces" : false }, (t) => {
