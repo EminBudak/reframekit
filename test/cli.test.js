@@ -65,13 +65,18 @@ test("the CLI explains itself and refuses a missing video or a bad option with e
   }
 });
 
-test("README's command line block gives --help's options and check options word for word, and the Codex manifest names the ffmpeg it needs as README does", () => {
+test("README's command line block gives --help's options and check options word for word, and --help and the Codex manifest name the ffmpeg it needs as README and SKILL.md do", () => {
   const help = cli(["--help"]).stdout;
   const end = "It exits with 1 when a file fails a place's limits.";
   const block = help.slice(help.indexOf("Options:"), help.indexOf(end) + end.length);
   assert.ok(block.length > 1000, block);
-  assert.ok(fs.readFileSync(path.join(__dirname, "..", "README.md"), "utf8").includes(block), "README's options are not --help's");
-  assert.match(require("../.codex-plugin/plugin.json").interface.longDescription, /Needs Node 22 or newer and ffmpeg 4\.4 or newer, and no API key\.$/);
+  const readme = fs.readFileSync(path.join(__dirname, "..", "README.md"), "utf8");
+  assert.ok(readme.includes(block), "README's options are not --help's");
+  // ffmpeg 4.4 or newer, in a build made with --enable-gpl.
+  assert.match(readme, /^- ffmpeg and ffprobe 4\.4 or newer, [^\n]*ffmpeg has to be a build made with `--enable-gpl`, as Ubuntu's is/m);
+  assert.match(fs.readFileSync(path.join(__dirname, "..", "skills", "reframekit", "SKILL.md"), "utf8"), /needs Node 22 or newer and ffmpeg 4\.4 or newer on the machine, in a build made with `--enable-gpl`, as Ubuntu's is;/);
+  assert.match(help, /\nNeeds Node 22 or newer and ffmpeg 4\.4 or newer in a build made with\n--enable-gpl, as Ubuntu's is; set FFMPEG_PATH and FFPROBE_PATH to pick them\.\n$/);
+  assert.match(require("../.codex-plugin/plugin.json").interface.longDescription, /Needs Node 22 or newer and ffmpeg 4\.4 or newer in a build made with --enable-gpl, and no API key\.$/);
 });
 
 test("the help keeps to 80 columns, and a color for --pad needs no quotes without its #", () => {

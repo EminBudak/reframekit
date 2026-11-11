@@ -13,7 +13,7 @@
   "interface": {
     "displayName": "reframekit",
     "shortDescription": "One video in every shape each place takes",
-    "longDescription": "Makes the 9:16, 4:5, 1:1 and 16:9 versions of a finished video for TikTok, Reels, Shorts, the feeds, YouTube, X and LinkedIn. In each shot the crop follows what moves, or shows the whole picture on a blurred copy when the action is too wide for it. Each file is cut at a shot change to the place's length, kept under its file size limit and set to -14 LUFS, with a cover. crop.json and sheet.png show every window so it can be moved before rendering. Needs Node 22 or newer and ffmpeg 4.4 or newer, and no API key.",
+    "longDescription": "Makes the 9:16, 4:5, 1:1 and 16:9 versions of a finished video for TikTok, Reels, Shorts, the feeds, YouTube, X and LinkedIn. In each shot the crop follows what moves, or shows the whole picture on a blurred copy when the action is too wide for it. Each file is cut at a shot change to the place's length, kept under its file size limit and set to -14 LUFS, with a cover. crop.json and sheet.png show every window so it can be moved before rendering. Needs Node 22 or newer and ffmpeg 4.4 or newer in a build made with --enable-gpl, and no API key.",
     "developerName": "Emin Budak",
     "category": "Creativity",
     "capabilities": ["Read", "Write"],

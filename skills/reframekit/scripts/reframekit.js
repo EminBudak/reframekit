@@ -72,8 +72,8 @@ Check options:
                      would go, or why the check would stop, measuring nothing
   It exits with 1 when a file fails a place's limits.
 
-Needs Node 22 or newer and ffmpeg 4.4 or newer; set FFMPEG_PATH and
-FFPROBE_PATH to pick them.`;
+Needs Node 22 or newer and ffmpeg 4.4 or newer in a build made with
+--enable-gpl, as Ubuntu's is; set FFMPEG_PATH and FFPROBE_PATH to pick them.`;
 
 const VALUED = new Set(["--for", "--mode", "--pad", "--brand", "--crop", "--cuts", "--steps", "--seconds", "--lufs", "--fps", "--cover", "--out", "--captions"]);
 const MODES = ["follow", "center", "pad", "fit"];
