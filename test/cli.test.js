@@ -795,26 +795,35 @@ test("an ffmpeg or an ffprobe that cannot be started, or that does not answer as
   }
 });
 
-test("an ffmpeg or an ffprobe that gives no answer when asked its version is stopped and named once the time is up", { skip: process.platform === "win32" }, () => {
-  const { find, ffmpegSource } = require("../skills/reframekit/scripts/lib/tools");
-  const standIn = path.join(outDir("no-answer"), "ffmpeg");
-  fs.mkdirSync(path.dirname(standIn), { recursive: true });
-  fs.writeFileSync(standIn, "#!/bin/sh\nexec sleep 30\n");
-  fs.chmodSync(standIn, 0o755);
-  const was = process.env.FFMPEG_PATH;
-  process.env.FFMPEG_PATH = standIn;
+test("an ffmpeg or an ffprobe that gives no answer when asked its version is stopped once the time is up, named, and said to have been slow, with no advice to install another", { skip: process.platform === "win32" }, () => {
+  // A working ffmpeg can be that slow on a machine too busy or short of
+  // memory, so the message says only that, and to run it again.
+  const { find, ffmpegSource, ffprobeSource } = require("../skills/reframekit/scripts/lib/tools");
+  const standIn = (tool) => {
+    const file = path.join(outDir("no-answer"), tool);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "#!/bin/sh\nexec sleep 30\n");
+    fs.chmodSync(file, 0o755);
+    return file;
+  };
+  const was = { FFMPEG_PATH: process.env.FFMPEG_PATH, FFPROBE_PATH: process.env.FFPROBE_PATH };
+  Object.assign(process.env, { FFMPEG_PATH: standIn("ffmpeg"), FFPROBE_PATH: standIn("ffprobe") });
   const began = Date.now();
   try {
-    assert.throws(() => find(ffmpegSource(), () => {}, 500), (err) => {
-      assert.equal(err.message, pointsTo("FFMPEG_PATH", standIn, "did not run as ffmpeg: it gave no answer in 0.5 s"));
-      assert.ok(err.unstarted);
-      return true;
-    });
+    for (const [tool, source] of [["ffmpeg", ffmpegSource()], ["ffprobe", ffprobeSource()]]) {
+      assert.throws(() => find(source, () => {}, 500), (err) => {
+        assert.equal(err.message, `reframekit could not check ${tool}, ${standIn(tool)}: it gave no answer in 0.5 s when asked its version, as on a machine too busy or short of memory. Run it again.`);
+        assert.ok(err.unstarted);
+        return true;
+      });
+    }
   } finally {
-    if (was === undefined) delete process.env.FFMPEG_PATH;
-    else process.env.FFMPEG_PATH = was;
+    for (const [name, value] of Object.entries(was)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
-  assert.ok(Date.now() - began < 10000, `${Date.now() - began} ms`);
+  assert.ok(Date.now() - began < 20000, `${Date.now() - began} ms`);
 });
 
 test("a line a program printed is quoted as it is, its control characters written out, and a long one keeps its start and its end", () => {

@@ -7,7 +7,8 @@
 // it answers as ffmpeg (or ffprobe) does. One that is not there, may not
 // be run, cannot be started or answers otherwise stops the run with the
 // variable or PATH that gave it, its path, what the system said or the
-// first line it printed, and how to get one. Which file of a chain of
+// first line it printed, and how to get one; one that gives no answer in
+// time stops it with its path and that alone. Which file of a chain of
 // scripts is at fault is never guessed: the line it printed says that.
 
 const fs = require("node:fs");
@@ -318,8 +319,7 @@ const MAX = 1024 * 1024;
 // output, then how it ended. The tool prints its version on its output,
 // so a program that ended well printing only on its error output is said
 // to.
-function answered(r, limit = ASK) {
-  if (r.error && r.error.code === "ETIMEDOUT") return `it gave no answer in ${limit / 1000} s`;
+function answered(r) {
   const out = firstLine(r.stdout);
   const err = firstLine(r.stderr);
   if (r.error && r.error.code === "ENOBUFS") return `it printed ${quoted(err || out)} and went on past ${MAX / 1024 / 1024} MB, so it was stopped`;
@@ -371,6 +371,12 @@ function nowhere(source, quiet, locked) {
 // takes to start a program, which names no file and no install.
 const short = (tool, err) => unusable(`reframekit could not start ${tool}, as ${SHORT[err.code]}`);
 
+// The error for a tool at `file` that gave no answer in `limit` ms when
+// asked its version. A working ffmpeg can be that slow on a machine too
+// busy or short of memory, as well as a program that is not one, so only
+// that is said, and to run it again, with no advice to install another.
+const late = (tool, file, limit) => unusable(`reframekit could not check ${tool}, ${file}: it gave no answer in ${limit / 1000} s when asked its version, as on a machine too busy or short of memory. Run it again.`);
+
 const ARGS = ["-hide_banner", "-version"];
 
 // The file the system runs for `source`, found before any work: the path
@@ -382,8 +388,9 @@ const ARGS = ["-hide_banner", "-version"];
 // as { file, source, said }, `said` being what it printed. Else the run
 // stops with that file, what the system said or the first line it
 // printed, and how it ended; when the system finds no file to run after
-// one it passed over, that first one is named. The error for a file that
-// a signal ended carries the signal (`signal`).
+// one it passed over, that first one is named. One that gives no answer
+// in time stops the run as late() says. The error for a file that a
+// signal ended carries the signal (`signal`).
 function find(source, show = () => {}, limit = ASK) {
   const { tool } = source;
   let passed = null;
@@ -394,10 +401,14 @@ function find(source, show = () => {}, limit = ASK) {
     if (!seen) {
       show(place.file, ARGS);
       const r = spawnSync(place.file, ARGS, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: limit, killSignal: "SIGKILL", maxBuffer: MAX, windowsHide: true });
-      const err = r.error && !["ETIMEDOUT", "ENOBUFS"].includes(r.error.code) ? r.error : null;
+      // An error with no process is the system's, at the start; one with
+      // a process came after it started: the time limit, or the most of
+      // its output that is taken in.
+      const err = r.error && !r.pid ? r.error : null;
       if (err && Object.hasOwn(SHORT, err.code)) throw short(tool, err);
+      if (!err && r.error && r.error.code === "ETIMEDOUT") throw late(tool, place.file, limit);
       if (!r.error && r.status === 0 && new RegExp(`^${tool} version `, "m").test(r.stdout)) return { file: place.file, source, said: String(r.stdout) };
-      seen = { on: err && PASSED.has(err.code) ? "passes" : "stops", words: `did not run as ${tool}: ${err ? unstartable(place.file, err) : answered(r, limit)}`, signal: r.error ? null : r.signal };
+      seen = { on: err && PASSED.has(err.code) ? "passes" : "stops", words: `did not run as ${tool}: ${err ? unstartable(place.file, err) : answered(r)}`, signal: r.error ? null : r.signal };
     } else if (seen.folder && source.variable && isPath(source.program)) {
       // A folder that holds the tool, as a static build's folder does.
       const inner = path.join(place.file, windows ? `${tool}.exe` : tool);
