@@ -32,11 +32,12 @@ const INK = { ground: "#111114", text: "#f4f1ea", dim: "#8b8a93", panel: "#1c1c2
 // so a grab of a 10-bit 3840x2160 video took 0.9 GB there, and 0.3 GB
 // with two threads. A grab that fails otherwise, or that a signal ends,
 // as when the system kills it as memory runs out, fails with how ffmpeg
-// ended (ffmpeg.js mustRun()), never taken for a moment with no picture.
-async function frameAt(info, t, w, h, work) {
+// ended (ffmpeg.js mustRun()), never taken for a moment with no picture,
+// and is said to be for `page`, the sheet the frame is drawn on.
+async function frameAt(info, t, w, h, work, page) {
   const at = Math.max(0, t);
   const seek = Math.max(0, Math.floor((at + (Number.isFinite(info.origin) ? info.origin : 0) - (info.startTime || 0)) * 1000) / 1000);
-  const r = await mustRun(["-v", "error", "-max_error_rate", "1", "-threads", "2", "-noaccurate_seek", "-ss", seek.toFixed(3), ...openVideo(info), "-map", `0:${info.video.index}`, "-frames:v", "1", "-vf", `setpts=PTS-${fromOrigin(info)}/TB,trim=start=${at.toFixed(4)},scale=${w}:${h}:flags=area,format=rgb24`, "-f", "rawvideo", "pipe:1"], `Taking the frame at ${at.toFixed(2)} s for sheet.png`, { cwd: work, collect: true });
+  const r = await mustRun(["-v", "error", "-max_error_rate", "1", "-threads", "2", "-noaccurate_seek", "-ss", seek.toFixed(3), ...openVideo(info), "-map", `0:${info.video.index}`, "-frames:v", "1", "-vf", `setpts=PTS-${fromOrigin(info)}/TB,trim=start=${at.toFixed(4)},scale=${w}:${h}:flags=area,format=rgb24`, "-f", "rawvideo", "pipe:1"], `Taking the frame at ${at.toFixed(2)} s for ${page}`, { cwd: work, collect: true });
   return r.stdout && r.stdout.length >= w * h * 3 ? r.stdout.subarray(0, w * h * 3) : null;
 }
 
@@ -175,8 +176,9 @@ async function drawSheets({ info, picture, shots: all, shapes, work, title, held
   const width = Math.max(pad * 2 + 3 * tw + 2 * gap, 960);
   for (let first = 0; first < shots.length; first += SHOTS_PER_PAGE) {
     const rows = shots.slice(first, first + SHOTS_PER_PAGE);
+    const name = first === 0 ? "sheet.png" : `sheet-${first / SHOTS_PER_PAGE + 1}.png`;
     const wanted = rows.flatMap((s, r) => (many ? [moments[first + r][0]] : moments[first + r]).map((t) => ({ i: first + r, t })));
-    const got = await grabAll(wanted, ({ t }) => frameAt(info, isHeld(t) ? lastAt : t, tw, th, work), grabsAtOnce(video));
+    const got = await grabAll(wanted, ({ t }) => frameAt(info, isHeld(t) ? lastAt : t, tw, th, work, name), grabsAtOnce(video));
     frames = new Map(wanted.map((w, k) => [`${w.i} ${w.t}`, got[k]]));
     // A row per shot, or, for a video of many shots, three shots to a row.
     const perRow = many ? 3 : 1;
@@ -209,7 +211,6 @@ async function drawSheets({ info, picture, shots: all, shapes, work, title, held
     });
     c.text(pad, height - 26, "SOLID: THE WINDOW AT THAT MOMENT. DASHED: THE SHOT IS PADDED, THE WHOLE PICTURE SHOWS.", INK.dim, 1);
     if (wanted.some(({ t }) => isHeld(t))) c.text(pad, height - 14, "HELD: THE PICTURE HAS ENDED BY THEN, AND A FILE THAT RUNS THAT FAR HOLDS ITS LAST FRAME.", INK.dim, 1);
-    const name = first === 0 ? "sheet.png" : `sheet-${first / SHOTS_PER_PAGE + 1}.png`;
     pages.push({ file: name, png: png(c, { Software: "reframekit" }), shots: [rows[0].n, rows[rows.length - 1].n] });
   }
   frames = null;

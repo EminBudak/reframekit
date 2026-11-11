@@ -554,6 +554,27 @@ test("a frame of the sheet that ffmpeg fails to take, as one the system kills as
   assert.ok(fs.readFileSync(path.join(again, "sheet.png")).equals(fs.readFileSync(path.join(plain, "sheet.png"))));
 });
 
+test("a frame that ffmpeg fails to take for the second page of the sheet is said to be for sheet-2.png, where the run said sheet.png", { skip: process.platform === "win32" }, () => {
+  // Sixteen shots of 0.75 s, so shots 13 to 16, from 9 s on, are on
+  // sheet-2.png, each with its middle frame; the system's ffmpeg, but for
+  // the runs that take a frame from 9 s on, which crash.
+  const bin = outDir("grab-page-bin");
+  fs.mkdirSync(bin, { recursive: true });
+  const real = spawnSync("sh", ["-c", "command -v ffmpeg"], { encoding: "utf8" }).stdout.trim();
+  const tool = path.join(bin, "ffmpeg");
+  fs.writeFileSync(tool, `#!/bin/sh\ncase " $* " in *" -frames:v 1 "*"trim=start=9."*|*" -frames:v 1 "*"trim=start=10."*|*" -frames:v 1 "*"trim=start=11."*) kill -SEGV $$;; esac\nexec "${real}" "$@"\n`);
+  fs.chmodSync(tool, 0o755);
+  const cuts = Array.from({ length: 15 }, (_, k) => 0.75 * (k + 1)).join(",");
+  const plain = outDir("grab-page-plain");
+  assert.equal(cli([fixture("fourShots"), "--for", "180x320", "--cuts", cuts, "--plan", "--out", plain]).status, 0);
+  assert.ok(fs.existsSync(path.join(plain, "sheet-2.png")));
+  const out = outDir("grab-page");
+  const r = cli([fixture("fourShots"), "--for", "180x320", "--cuts", cuts, "--plan", "--out", out], { env: { ...process.env, FFMPEG_PATH: tool } });
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr.trim().split("\n").pop(), /^reframekit: Taking the frame at (?:9|10|11)\.\d\d s for sheet-2\.png: ffmpeg crashed \(SIGSEGV\)$/);
+  assert.ok(!fs.existsSync(out));
+});
+
 test("a moment of the sheet where ffmpeg decodes no frame, as in a damaged end of the file, is drawn as one with no picture and the run goes on, where the grab failed on ffmpeg's rate of decoding errors and stopped the run", { skip: process.platform === "win32" }, () => {
   // Four seconds with a key frame every second, its index first, the file
   // zeroed from the key frame at 3 s to its end, as a damaged copy can
