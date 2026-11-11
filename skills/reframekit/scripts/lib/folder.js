@@ -722,12 +722,23 @@ function removeCreated(full, created) {
 // error that stopped the run.
 const REMOVE = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 };
 
+// Removes `at` and what is in it, the folders inside it first, deepest
+// first, so it never takes more than one file descriptor at a time, as the
+// reserve gives a run that has no other: Node 24's rmSync holds one for
+// each level of folders it goes down, and could not remove .work with
+// .work/read in it.
+function removeTree(at) {
+  const stat = fs.lstatSync(at, { throwIfNoEntry: false });
+  if (stat && stat.isDirectory()) for (const entry of fs.readdirSync(at, { withFileTypes: true })) if (entry.isDirectory()) removeTree(path.join(at, entry.name));
+  fs.rmSync(at, REMOVE);
+}
+
 // Whether the hidden folder is gone.
 function removeStage(stage) {
   try {
     // A folder of its own, never one a link leads to.
     if (!fs.lstatSync(stage).isDirectory()) return true;
-    for (const name of fs.readdirSync(stage)) if (name !== ".owner") fs.rmSync(path.join(stage, name), REMOVE);
+    for (const name of fs.readdirSync(stage)) if (name !== ".owner") removeTree(path.join(stage, name));
     fs.rmSync(stage, REMOVE);
     return true;
   } catch {
