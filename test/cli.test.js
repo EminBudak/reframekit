@@ -1541,7 +1541,7 @@ test("an ffmpeg named by a path from the folder the run is started in, as ../bin
   }
 });
 
-test("an ffmpeg named by a name on PATH, with no folder in it, runs with the ffprobe on PATH, never with a file named like its ffprobe in the folder the run is started in", { skip: process.platform === "win32" }, () => {
+test("an ffmpeg named by a name on PATH, with no folder in it, runs with the ffprobe on PATH, never with a file named like its ffprobe in the folder the run is started in or on PATH", { skip: process.platform === "win32" }, () => {
   const top = outDir("named-tools");
   const bin = path.join(top, "bin");
   const started = path.join(top, "here");
@@ -1549,8 +1549,11 @@ test("an ffmpeg named by a name on PATH, with no folder in it, runs with the ffp
   fs.mkdirSync(started, { recursive: true });
   fs.symlinkSync(fs.realpathSync(spawnSync("sh", ["-c", "command -v ffmpeg"], { encoding: "utf8" }).stdout.trim()), path.join(bin, "ffmpeg-named"));
   // A file named as the ffprobe next to ffmpeg-named would be, where the
-  // run is started: no folder of PATH holds it.
+  // run is started, and a program of that name next to ffmpeg-named on
+  // PATH that fails: neither is the ffprobe on PATH.
   fs.writeFileSync(path.join(started, "ffprobe-named"), "not a program\n");
+  fs.writeFileSync(path.join(bin, "ffprobe-named"), "#!/bin/sh\necho 'not the ffprobe on PATH' >&2\nexit 1\n");
+  fs.chmodSync(path.join(bin, "ffprobe-named"), 0o755);
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, FFMPEG_PATH: "ffmpeg-named" };
   for (const name of ["FFPROBE_PATH", "LAUNCH_FILM_FFMPEG", "LAUNCH_FILM_FFPROBE"]) delete env[name];
   const r = cli([fixture("twoShots"), "--for", "180x320", "--plan", "--out", "planned"], { cwd: started, env });
