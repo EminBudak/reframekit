@@ -74,14 +74,18 @@ function debug(tool, args) {
 
 // The filters a run needs: every one its graphs use, those only some runs
 // use as well (bwdif for an interlaced picture, fade for a file cut where
-// no shot changes), so a build that lacks one stops before any work, not
-// part way. All are built into ffmpeg (no external library), Homebrew's
-// default build included, but cropdetect and eq only into a build made
-// with --enable-gpl, as Ubuntu's is: FFmpeg's configure gives each of them
-// gpl as what it depends on. scdet came in ffmpeg 4.3, every other one
-// before it, so an older ffmpeg stops here; the version itself is not
-// checked. 4.4 is Ubuntu 22.04's, and the oldest the kit is tested on.
-const FILTERS = ["scdet", "cropdetect", "metadata", "sendcmd", "crop", "scale", "color", "overlay", "gblur", "eq", "fps", "tpad", "trim", "fade", "split", "setsar", "setparams", "setpts", "format", "bwdif", "loudnorm", "ebur128", "aresample", "aformat", "afade", "atrim", "asetpts", "volume"];
+// no shot changes), and those ffmpeg adds itself to turn a picture stored
+// sideways or upside down upright, as a phone stores its videos, which
+// openVideo() leaves it to do (transpose for a quarter turn, hflip and
+// vflip for a half turn or a mirror, rotate for any other angle), so a
+// build that lacks one stops before any work, not part way. All are built
+// into ffmpeg (no external library), Homebrew's default build included,
+// but cropdetect and eq only into a build made with --enable-gpl, as
+// Ubuntu's is: FFmpeg's configure gives each of them gpl as what it
+// depends on. scdet came in ffmpeg 4.3, every other one before it, so an
+// older ffmpeg stops here; the version itself is not checked. 4.4 is
+// Ubuntu 22.04's, and the oldest the kit is tested on.
+const FILTERS = ["scdet", "cropdetect", "metadata", "sendcmd", "crop", "scale", "color", "overlay", "gblur", "eq", "fps", "tpad", "trim", "fade", "split", "setsar", "setparams", "setpts", "format", "bwdif", "transpose", "hflip", "vflip", "rotate", "loudnorm", "ebur128", "aresample", "aformat", "afade", "atrim", "asetpts", "volume"];
 const GPL_ONLY = new Set(["cropdetect", "eq"]);
 
 const lastLine = (text) => String(text || "").trim().split("\n").filter(Boolean).pop() || "";
