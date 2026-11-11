@@ -31,6 +31,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
+// What a run says when the system has no file descriptor to give it.
+const { SHORT } = require("./tools");
 
 const STAGE = ".reframekit-";
 const SHEET = /^sheet(-\d+)?\.png$/;
@@ -629,8 +631,40 @@ function makeStage(full) {
   }
 }
 
+// A file descriptor a run holds from when it opens its hidden folder until
+// it is done with it, and lets go of just before it removes that folder,
+// so a run that fails as the system leaves it no other one, as when ffmpeg
+// cannot be started for want of them, can still remove what it made:
+// removing a folder takes one at a time. It is the null device, or this
+// file where there is none. A run that cannot hold one, as the process or
+// the system has as many files open as it may, makes nothing.
+let reserve = null;
+
+function holdReserve(shown) {
+  if (reserve !== null) return;
+  for (const file of [os.devNull, __filename]) {
+    try {
+      reserve = fs.openSync(file, "r");
+      return;
+    } catch (err) {
+      if (err.code === "EMFILE" || err.code === "ENFILE") throw new Error(`Cannot take ${shown}: ${SHORT[err.code]}`);
+    }
+  }
+}
+
+function freeReserve() {
+  if (reserve === null || open.size) return;
+  try {
+    fs.closeSync(reserve);
+  } catch {
+    // Closed already.
+  }
+  reserve = null;
+}
+
 function openStage(full, { stop = () => {}, shown = full } = {}) {
   guard(stop);
+  holdReserve(shown);
   const created = firstMissing(full);
   let stage;
   try {
@@ -638,12 +672,18 @@ function openStage(full, { stop = () => {}, shown = full } = {}) {
     stage = makeStage(full);
   } catch (err) {
     removeCreated(full, created);
+    freeReserve();
     throw err;
   }
   const rec = { dir: full, shown, stage, work: path.join(stage, ".work"), created, keep: false };
   open.add(rec);
-  fs.writeFileSync(path.join(stage, ".owner"), JSON.stringify({ pid: process.pid, host: os.hostname(), dir: full, started: startOf(process.pid) }));
-  fs.mkdirSync(rec.work);
+  try {
+    fs.writeFileSync(path.join(stage, ".owner"), JSON.stringify({ pid: process.pid, host: os.hostname(), dir: full, started: startOf(process.pid) }));
+    fs.mkdirSync(rec.work);
+  } catch (err) {
+    drop(rec);
+    throw err;
+  }
   return rec;
 }
 
@@ -702,6 +742,7 @@ function removeStage(stage) {
 function drop(rec) {
   if (!open.has(rec)) return null;
   open.delete(rec);
+  freeReserve();
   const gone = rec.keep ? false : removeStage(rec.stage);
   removeCreated(rec.dir, rec.created);
   const told = { shown: rec.shown, stage: rec.stage, gone };
@@ -807,6 +848,7 @@ function finishStage(rec, remove = [], folder = null) {
     rec.keep = true;
     fs.rmSync(path.join(stage, ".owner"), { force: true });
     open.delete(rec);
+    freeReserve();
     unguard();
     // Named as the folder was given, as every other error names it.
     const shown = rec.shown || dir;
@@ -816,6 +858,7 @@ function finishStage(rec, remove = [], folder = null) {
   // aside, which the next run here removes if they cannot go now.
   removeStage(stage);
   open.delete(rec);
+  freeReserve();
   unguard();
 }
 

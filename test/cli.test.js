@@ -886,6 +886,69 @@ test("an ffmpeg run that cannot start for want of file descriptors once the run 
   assert.equal(r.stdout, "reframekit could not start ffmpeg, as this process has as many files open as it may (too many open files). Raise that limit, as ulimit -n does, and run it again.\n");
 });
 
+test("a run left no file descriptor to start ffmpeg with once it has taken its folder leaves the folder as it was, one it made too", { skip: process.platform === "win32" ? "it takes sh to lower the limit" : false }, () => {
+  // A preload that, as the run starts its first ffmpeg in its work folder,
+  // holds every file descriptor it may open but HOLD_FREE, and keeps them.
+  const hold = path.join(dir, "hold-at-first-run.js");
+  fs.writeFileSync(hold, `"use strict";
+const fs = require("node:fs");
+const cp = require("node:child_process");
+const real = cp.spawn;
+let n = 0;
+const held = [];
+cp.spawn = function (...args) {
+  if (++n === 1) {
+    try {
+      for (;;) held.push(fs.openSync(__filename, "r"));
+    } catch {}
+    for (let i = 0; i < Number(process.env.HOLD_FREE); i++) fs.closeSync(held.pop());
+  }
+  return real.apply(this, args);
+};
+`);
+  const said = "reframekit: reframekit could not start ffmpeg, as this process has as many files open as it may (too many open files). Raise that limit, as ulimit -n does, and run it again.\n";
+  const held = (args, out, free) => spawnSync("sh", ["-c", 'ulimit -n 256 && exec "$@"', "sh", process.execPath, "--require", hold, CLI, ...args, "--out", out], { encoding: "utf8", env: { ...process.env, HOLD_FREE: String(free) } });
+  const listing = (folder) => fs.readdirSync(folder, { recursive: true }).sort();
+  for (const free of [0, 1, 2]) {
+    for (const [mode, args] of [["render", [fixture("twoShots"), "--for", "180x320"]], ["plan", [fixture("twoShots"), "--for", "180x320", "--plan"]]]) {
+      const out = outDir(`descriptors-part-way-${free}-${mode}`);
+      const r = held(args, out, free);
+      assert.equal(r.status, 1, `${free} ${mode}: ${r.stderr}`);
+      assert.ok(r.stderr.endsWith(said), `${free} ${mode}: ${r.stderr}`);
+      assert.ok(!fs.existsSync(out), `${free} ${mode}: ${fs.existsSync(out) ? listing(out).join(" ") : ""}`);
+    }
+  }
+  // A folder an earlier run made keeps what it held.
+  const kept = outDir("descriptors-part-way-kept");
+  assert.equal(cli([fixture("twoShots"), "--for", "180x320", "--plan", "--out", kept]).status, 0);
+  const before = listing(kept);
+  const r = held([fixture("twoShots"), "--for", "180x320", "--plan"], kept, 0);
+  assert.equal(r.status, 1, r.stderr);
+  assert.ok(r.stderr.endsWith(said), r.stderr);
+  assert.deepEqual(listing(kept), before);
+  // One left none as it takes its folder makes nothing there.
+  const atTaking = path.join(dir, "hold-at-taking.js");
+  fs.writeFileSync(atTaking, `"use strict";
+const fs = require("node:fs");
+const os = require("node:os");
+const real = fs.openSync;
+const held = [];
+fs.openSync = function (file, ...rest) {
+  if (file === os.devNull && !held.length) {
+    try {
+      for (;;) held.push(real.call(fs, __filename, "r"));
+    } catch {}
+  }
+  return real.call(this, file, ...rest);
+};
+`);
+  const taking = outDir("descriptors-at-taking");
+  const t = spawnSync("sh", ["-c", 'ulimit -n 256 && exec "$@"', "sh", process.execPath, "--require", atTaking, CLI, fixture("twoShots"), "--for", "180x320", "--plan", "--out", taking], { encoding: "utf8" });
+  assert.equal(t.status, 1, t.stderr);
+  assert.ok(t.stderr.endsWith(`reframekit: Cannot take ${taking}: this process has as many files open as it may (too many open files). Raise that limit, as ulimit -n does, and run it again.\n`), t.stderr);
+  assert.ok(!fs.existsSync(taking));
+});
+
 test("an ffmpeg that answered before any work and can no longer be started part way is named by its path with what the system said, and a start in a work folder that is gone is that folder's", { skip: process.platform === "win32" }, async () => {
   // A wrapper that answers what it is and has, then takes itself away as
   // the run reads the picture.
