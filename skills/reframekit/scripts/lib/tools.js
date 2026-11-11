@@ -363,9 +363,11 @@ function unstartable(file, err) {
   return `the system could not start it: ${worded(err)}${first}`;
 }
 
-// The longest a program may take to say its version, and the most of it
-// that is taken in.
-const ASK = 60_000;
+// The longest a program may take to say its version, two minutes, as
+// musicfit and easycaptionkit wait: on a machine short of memory, with its
+// swap full, ffmpeg 4.4 took more than 30 seconds to say its version. And
+// the most of what it prints that is taken in.
+const ASK = 120_000;
 const MAX = 1024 * 1024;
 
 // What the program at `file` did when it ran, asked its version, and did

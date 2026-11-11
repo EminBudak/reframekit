@@ -465,7 +465,7 @@ test("an ffmpeg or an ffprobe that does not answer is named with why it did not"
   // One too slow to answer, as on a machine too busy, which spawnSync ends.
   const late = { error: Object.assign(new Error("spawnSync ffprobe ETIMEDOUT"), { code: "ETIMEDOUT" }), signal: "SIGTERM", status: null };
   assert.equal(unanswered("ffprobe", late, 120_000, "while it read film.mp4").message, "ffprobe did not answer within 120 s while it read film.mp4: the machine may be too busy. Run reframekit again when the machine is less busy.");
-  assert.equal(unanswered("ffmpeg", late, 60_000, "when asked to list its filters").message, "ffmpeg did not answer within 60 s when asked to list its filters: the machine may be too busy. Run reframekit again when the machine is less busy.");
+  assert.equal(unanswered("ffmpeg", late, 120_000, "when asked to list its filters").message, "ffmpeg did not answer within 120 s when asked to list its filters: the machine may be too busy. Run reframekit again when the machine is less busy.");
   // A signal that stops a run, as Ctrl-C, is a stop (`stopped`); a crash,
   // or the system's kill when memory runs out, is not.
   const ended = (signal) => unanswered("ffprobe", { signal, status: null }, 120_000, "while it read film.mp4");
@@ -830,6 +830,18 @@ test("an ffmpeg or an ffprobe that gives no answer when asked its version is sto
     }
   }
   assert.ok(Date.now() - began < 20000, `${Date.now() - began} ms`);
+});
+
+test("an ffmpeg or an ffprobe has two minutes to say its version, as musicfit and easycaptionkit give it, where a run gave it one, and the README and SKILL.md say so", () => {
+  // On a machine short of memory, with its swap full, ffmpeg 4.4 took more
+  // than 30 seconds to say its version.
+  const { ASK } = require("../skills/reframekit/scripts/lib/tools");
+  assert.equal(ASK, 120_000);
+  const readme = fs.readFileSync(path.join(__dirname, "..", "README.md"), "utf8");
+  const skill = fs.readFileSync(path.join(__dirname, "..", "skills", "reframekit", "SKILL.md"), "utf8");
+  assert.match(readme, /One that gives no answer in two minutes, as even a working one can/);
+  assert.match(skill, /with "it gave no answer in 120 s", means it did not say its version within two minutes/);
+  assert.doesNotMatch(`${readme}\n${skill}`, /no answer in (?:a minute|60 s)|within a minute/);
 });
 
 test("an entry of PATH on a network mount the system cannot reach, as one whose handle went stale, is passed over as glibc passes over it, and an ffmpeg a variable names there is said to be so in the system's words", { skip: process.platform !== "linux" ? "the stand-in gives Linux's error numbers" : false }, () => {
