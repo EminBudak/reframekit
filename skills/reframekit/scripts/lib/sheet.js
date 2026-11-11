@@ -8,7 +8,7 @@
 // sheet-2.png and so on, twelve shots to a page, ten pages at most; a
 // video of more shots than that shows 120 of them, spread evenly.
 
-const { run, openVideo, fromOrigin } = require("./ffmpeg");
+const { mustRun, openVideo, fromOrigin } = require("./ffmpeg");
 const { canvas, png } = require("./draw");
 const { windowPath } = require("./plan");
 
@@ -20,26 +20,60 @@ const INK = { ground: "#111114", text: "#f4f1ea", dim: "#8b8a93", panel: "#1c1c2
 // One frame of the video at t, as RGB at w x h, t counted from the
 // video's origin as every run that reads it counts (ffmpeg.js). ffmpeg
 // seeks to the key frame before t, counting from the file's own start,
-// and the graph keeps the first frame from t on.
+// and the graph keeps the first frame from t on: null when ffmpeg ends
+// well with no frame there, as the picture has none of its own, or none
+// ffmpeg can decode from that key frame on, as in a damaged end of the
+// file. By itself ffmpeg fails a run when more than two thirds of the
+// frames it decoded failed (exit code 69), as a grab there can, though
+// the video as a whole reads well enough; -max_error_rate 1 keeps it
+// from failing for that alone. A grab that fails otherwise, or that a
+// signal ends, as when the system kills it as memory runs out, fails
+// with how ffmpeg ended (ffmpeg.js mustRun()), never taken for a moment
+// with no picture.
 async function frameAt(info, t, w, h, work) {
   const at = Math.max(0, t);
   const seek = Math.max(0, Math.floor((at + (Number.isFinite(info.origin) ? info.origin : 0) - (info.startTime || 0)) * 1000) / 1000);
-  const r = await run(["-hide_banner", "-nostdin", "-v", "error", "-noaccurate_seek", "-ss", seek.toFixed(3), ...openVideo(info), "-map", `0:${info.video.index}`, "-frames:v", "1", "-vf", `setpts=PTS-${fromOrigin(info)}/TB,trim=start=${at.toFixed(4)},scale=${w}:${h}:flags=area,format=rgb24`, "-f", "rawvideo", "pipe:1"], { cwd: work, collect: true });
-  if (r.code === 0 && r.stdout && r.stdout.length >= w * h * 3) return r.stdout.subarray(0, w * h * 3);
-  return null;
+  const r = await mustRun(["-v", "error", "-max_error_rate", "1", "-noaccurate_seek", "-ss", seek.toFixed(3), ...openVideo(info), "-map", `0:${info.video.index}`, "-frames:v", "1", "-vf", `setpts=PTS-${fromOrigin(info)}/TB,trim=start=${at.toFixed(4)},scale=${w}:${h}:flags=area,format=rgb24`, "-f", "rawvideo", "pipe:1"], `Taking the frame at ${at.toFixed(2)} s for sheet.png`, { cwd: work, collect: true });
+  return r.stdout && r.stdout.length >= w * h * 3 ? r.stdout.subarray(0, w * h * 3) : null;
 }
 
+// fn() for each item, `jobs` at a time, the results in the items' order.
+// Once one fails no other starts, and the first failure is thrown when
+// those under way have ended, so none is left running in the work
+// folder the run then takes away.
 async function pool(items, jobs, fn) {
   const out = new Array(items.length);
   let next = 0;
+  let failed = null;
   const worker = async () => {
-    while (next < items.length) {
+    while (next < items.length && !failed) {
       const i = next++;
-      out[i] = await fn(items[i], i);
+      try {
+        out[i] = await fn(items[i], i);
+      } catch (err) {
+        failed = failed || { err };
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(jobs, items.length) }, worker));
+  if (failed) throw failed.err;
   return out;
+}
+
+// The frames of `wanted`, four at once. A grab the system killed (SIGKILL),
+// as it does when memory runs out, is taken again alone once the others
+// are done, so a run near the memory it may take still draws every frame;
+// a second kill, or any other failure, stops the run.
+const KILLED = Symbol("killed");
+async function grabAll(wanted, grab) {
+  const got = await pool(wanted, 4, (item) =>
+    grab(item).catch((err) => {
+      if (err.signal === "SIGKILL") return KILLED;
+      throw err;
+    }),
+  );
+  for (const [k, frame] of got.entries()) if (frame === KILLED) got[k] = await grab(wanted[k]);
+  return got;
 }
 
 const pct = (x) => `${Math.round(x * 100)}%`;
@@ -131,7 +165,7 @@ async function drawSheets({ info, picture, shots: all, shapes, work, title, held
   for (let first = 0; first < shots.length; first += SHOTS_PER_PAGE) {
     const rows = shots.slice(first, first + SHOTS_PER_PAGE);
     const wanted = rows.flatMap((s, r) => (many ? [moments[first + r][0]] : moments[first + r]).map((t) => ({ i: first + r, t })));
-    const got = await pool(wanted, 4, ({ t }) => frameAt(info, isHeld(t) ? lastAt : t, tw, th, work));
+    const got = await grabAll(wanted, ({ t }) => frameAt(info, isHeld(t) ? lastAt : t, tw, th, work));
     frames = new Map(wanted.map((w, k) => [`${w.i} ${w.t}`, got[k]]));
     // A row per shot, or, for a video of many shots, three shots to a row.
     const perRow = many ? 3 : 1;

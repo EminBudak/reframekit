@@ -513,6 +513,80 @@ test("the sheet's frames of an MPEG-TS and an MPEG-PS are those of the moments t
   }
 });
 
+test("a frame of the sheet that ffmpeg fails to take, as one the system kills as memory runs out, stops the run with how ffmpeg ended and makes no folder, where the sheet drew it as a moment with no picture; one killed once is taken again alone and drawn", { skip: process.platform === "win32" }, () => {
+  // The system's ffmpeg, but for the runs that take a frame for the sheet
+  // (-frames:v 1 into a pipe of raw frames): killed as when memory runs
+  // out, crashed, failing with a line of its own, or killed once for each
+  // frame, the first time it is asked for it.
+  const bin = outDir("grab-bin");
+  const marks = path.join(bin, "marks");
+  fs.mkdirSync(marks, { recursive: true });
+  const real = spawnSync("sh", ["-c", "command -v ffmpeg"], { encoding: "utf8" }).stdout.trim();
+  const wrapper = (name, act) => {
+    fs.writeFileSync(path.join(bin, name), `#!/bin/sh\ncase " $* " in *" -frames:v 1 "*"rawvideo pipe:1 "*) ${act};; esac\nexec "${real}" "$@"\n`);
+    fs.chmodSync(path.join(bin, name), 0o755);
+    return path.join(bin, name);
+  };
+  const tools = {
+    killed: [wrapper("killed", "kill -KILL $$"), /^Taking the frame at 0\.30 s for sheet\.png: ffmpeg was killed \(SIGKILL\), as when the machine runs out of memory$/],
+    crashed: [wrapper("crashed", "kill -SEGV $$"), /^Taking the frame at \d+\.\d\d s for sheet\.png: ffmpeg crashed \(SIGSEGV\)$/],
+    failing: [wrapper("failing", "echo 'Cannot allocate memory' >&2; exit 1"), /^Taking the frame at \d+\.\d\d s for sheet\.png: ffmpeg failed: Cannot allocate memory$/],
+  };
+  for (const [name, [tool, said]] of Object.entries(tools)) {
+    for (const args of [["--plan"], []]) {
+      const out = outDir(`grab-${name}${args.length ? "-plan" : ""}`);
+      const r = cli([fixture("twoShots"), "--for", "180x320", ...args, "--out", out], { env: { ...process.env, FFMPEG_PATH: tool } });
+      assert.equal(r.status, 1, `${name}: ${r.stderr}`);
+      const last = r.stderr.trim().split("\n").pop().replace(/^reframekit: /, "");
+      assert.match(last, said, name);
+      assert.ok(!fs.existsSync(out), name);
+    }
+  }
+  // Killed once for each frame: every frame is taken again and drawn, so
+  // the sheet is the one a run whose frames all came at once draws.
+  const once = wrapper("once", `mark="${marks}/$(printf '%s' "$*" | cksum | cut -d' ' -f1)"; if [ ! -e "$mark" ]; then : > "$mark"; kill -KILL $$; fi`);
+  const plain = outDir("grab-plain");
+  assert.equal(cli([fixture("twoShots"), "--for", "180x320", "--plan", "--out", plain]).status, 0);
+  const again = outDir("grab-once");
+  const r = cli([fixture("twoShots"), "--for", "180x320", "--plan", "--out", again], { env: { ...process.env, FFMPEG_PATH: once } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.readdirSync(marks).length, 6);
+  assert.ok(fs.readFileSync(path.join(again, "sheet.png")).equals(fs.readFileSync(path.join(plain, "sheet.png"))));
+});
+
+test("a moment of the sheet where ffmpeg decodes no frame, as in a damaged end of the file, is drawn as one with no picture and the run goes on, where the grab failed on ffmpeg's rate of decoding errors and stopped the run", { skip: process.platform === "win32" }, () => {
+  // Four seconds with a key frame every second, its index first, the file
+  // zeroed from the key frame at 3 s to its end, as a damaged copy can
+  // be: the picture as a whole reads well enough, and a grab of a moment
+  // after 3 s starts from that key frame and decodes nothing.
+  const damaged = path.join(dir, "damaged-end.mp4");
+  ffmpeg(["-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:d=4", ...ENCODE, "-g", "30", "-movflags", "+faststart", damaged]);
+  const { packets } = JSON.parse(spawnSync("ffprobe", ["-v", "error", "-select_streams", "v", "-show_entries", "packet=pts_time,pos,flags", "-of", "json", damaged], { encoding: "utf8" }).stdout);
+  const key = packets.find((p) => Math.abs(Number(p.pts_time) - 3) < 0.01 && p.flags.startsWith("K"));
+  assert.ok(key, JSON.stringify(packets.slice(85, 95)));
+  const size = fs.statSync(damaged).size;
+  const fd = fs.openSync(damaged, "r+");
+  fs.writeSync(fd, Buffer.alloc(size - Number(key.pos)), 0, size - Number(key.pos), Number(key.pos));
+  fs.closeSync(fd);
+  const out = outDir("damaged-end");
+  const r = cli([damaged, "--for", "180x320", "--plan", "--out", out], { env: { ...process.env, REFRAMEKIT_DEBUG: "1" } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(out, "sheet.png")));
+  // The grab of the sheet's last moment, after 3 s, as ffmpeg runs it by
+  // itself: it fails with 69, ffmpeg's exit when more than two thirds of
+  // the frames it decoded failed, and gives no frame.
+  const grabs = r.stderr.split("\n").filter((line) => / -frames:v 1 .*rawvideo pipe:1$/.test(line));
+  const last = grabs.map((line) => ({ line, at: Number((/trim=start=([\d.]+),/.exec(line) || [])[1]) })).sort((a, b) => b.at - a.at)[0];
+  assert.ok(last && last.at > 3, r.stderr);
+  const [tool, ...args] = last.line.split(" ");
+  const at = args.indexOf("-max_error_rate");
+  assert.ok(at >= 0, last.line);
+  args.splice(at, 2);
+  const plain = spawnSync(tool, args, { encoding: "buffer" });
+  assert.equal(plain.status, 69, String(plain.stderr));
+  assert.equal(plain.stdout.length, 0);
+});
+
 test("an MPEG-PS whose sound an MP4 cannot hold as it is, as a DVD's PCM, renders with that sound on its frame, and formats.json names the sound's own codec", () => {
   // A DVD's VOB: MPEG-2 picture and PCM sound, the flash and the click at
   // 1 s. Its copy holds the sound as ALAC.
