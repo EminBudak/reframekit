@@ -277,11 +277,13 @@ function mergeGiven(crop, given) {
 // with what formats.json gave of it, failing, the check's row for it
 // saying why, so a check fails it and the next run measures it again. One
 // for no place reframekit makes is left out of formats.json, though not
-// out of the folder. A note says either (`note`). An ffprobe stopped by
-// Ctrl-C or another signal that stops a run stops the run. `shown` is
-// the folder as it was given, which the errors name the file in. Returns
-// { file, place, note }, the file and its place null for one left out,
-// which is named (`name`).
+// out of the folder. A note says either (`note`). An ffprobe that says
+// nothing of the file stops the run, as it stops a check (check.js): one
+// stopped by Ctrl-C or another signal that stops a run, one the system
+// could not start, as when it starts no more processes for now, and one
+// that gave no answer in time. `shown` is the folder as it was given,
+// which the errors name the file in. Returns { file, place, note }, the
+// file and its place null for one left out, which is named (`name`).
 async function keptEntry(f, dir, work, shown = dir) {
   const file = path.basename(f.file);
   const name = typeof f.place === "string" ? f.place : "";
@@ -301,8 +303,8 @@ async function keptEntry(f, dir, work, shown = dir) {
   try {
     info = probe(full, path.join(shown, file));
   } catch (err) {
-    if (err.stopped) throw err;
-    why = String(err.why || err.message).replace(/\.$/, "");
+    if (!err.why) throw err;
+    why = String(err.why).replace(/\.$/, "");
   }
   const num = (x) => (typeof x === "number" && Number.isFinite(x) ? x : null);
   const text = (x) => (typeof x === "string" ? x : null);

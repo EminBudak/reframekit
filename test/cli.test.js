@@ -1417,6 +1417,43 @@ test("an ffprobe that crashes on a file of a checked folder, or that the system 
   assert.ok(!fs.existsSync(outDir("probe-crash-video")));
 });
 
+test("an ffprobe the system cannot start, or that gives no answer in time, as a run measures a file it keeps from the run before stops the run and leaves the folder as it was, as it stops a check, never taken for that file's failure", { skip: process.platform === "win32" }, () => {
+  const out = outDir("kept-unread");
+  assert.equal(cli([fixture("twoShots"), "--for", "180x320,180x180", "--out", out]).status, 0);
+  // A preload under which the ffprobe that reads 180x180.mp4 is not
+  // started, as when the system starts no more processes for now
+  // (EAGAIN), or is stopped at the time limit, as spawnSync stops one
+  // that gives no answer; every other run goes as it would.
+  const preload = path.join(dir, "kept-unread.js");
+  fs.writeFileSync(preload, `"use strict";
+const cp = require("node:child_process");
+const spawnSync = cp.spawnSync;
+cp.spawnSync = function (file, args, ...rest) {
+  if (/ffprobe$/.test(String(file)) && Array.isArray(args) && args.some((a) => String(a).endsWith("/180x180.mp4"))) {
+    if (process.env.KEPT_UNREAD === "EAGAIN") return { error: Object.assign(new Error("spawnSync " + file + " EAGAIN"), { code: "EAGAIN", errno: -11, syscall: "spawnSync " + file, path: file }), status: null, signal: null, output: null, pid: 0 };
+    return { error: Object.assign(new Error("spawnSync " + file + " ETIMEDOUT"), { code: "ETIMEDOUT", errno: -110, syscall: "spawnSync " + file, path: file }), status: null, signal: "SIGTERM", output: [null, "", ""], stdout: "", stderr: "", pid: 4242 };
+  }
+  return spawnSync.call(this, file, args, ...rest);
+};
+`);
+  const listing = (folder) => Object.fromEntries(fs.readdirSync(folder).sort().map((n) => [n, fs.readFileSync(path.join(folder, n)).toString("base64")]));
+  const said = {
+    EAGAIN: "reframekit could not start ffprobe, as the system would not start another process just then (resource temporarily unavailable). Run it again once fewer processes run.",
+    ETIMEDOUT: `${realTool("ffprobe")} did not answer within 120 s while it read ${path.join(out, "180x180.mp4")}: the machine may be too busy. Run reframekit again when the machine is less busy.`,
+  };
+  for (const [how, words] of Object.entries(said)) {
+    const before = listing(out);
+    const r = spawnSync(process.execPath, ["--require", preload, CLI, fixture("twoShots"), "--for", "180x320", "--out", out], { encoding: "utf8", env: { ...process.env, FFPROBE_PATH: realTool("ffprobe"), KEPT_UNREAD: how } });
+    assert.equal(r.status, 1, `${how}: ${r.stdout}${r.stderr}`);
+    assert.ok(r.stderr.endsWith(`\nreframekit: ${words}\n`), `${how}: ${r.stderr}`);
+    assert.deepEqual(listing(out), before, how);
+  }
+  // A check of the folder that cannot start its ffprobe stops the same way.
+  const check = spawnSync(process.execPath, ["--require", preload, CLI, "check", out], { encoding: "utf8", env: { ...process.env, FFPROBE_PATH: realTool("ffprobe"), KEPT_UNREAD: "EAGAIN" } });
+  assert.equal(check.status, 1, check.stdout + check.stderr);
+  assert.equal(check.stderr, `reframekit: ${said.EAGAIN}\n`);
+});
+
 test("an ffmpeg named only by LAUNCH_FILM_FFMPEG and LAUNCH_FILM_FFPROBE is the one that runs", () => {
   const bin = outDir("guard-bin");
   fs.mkdirSync(bin, { recursive: true });
