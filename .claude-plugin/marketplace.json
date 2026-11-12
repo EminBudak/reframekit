@@ -14,8 +14,8 @@
       "author": {
         "name": "Emin Budak"
       },
-      "homepage": "https://github.com/EminBudak/reframekit",
-      "repository": "https://github.com/EminBudak/reframekit",
+      "homepage": "https://github.com/MakersMCP/reframekit",
+      "repository": "https://github.com/MakersMCP/reframekit",
       "license": "MIT",
       "keywords": ["skills", "video", "reframe", "crop", "vertical-video", "loudness"]
     }

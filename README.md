@@ -72,20 +72,20 @@ Each page was read on 2026-11-07, and only a place's own pages count: guides on 
 reframekit ships as an [Agent Skill](https://agentskills.io). Install it once and your agent runs it by itself when a video has to go somewhere in another shape:
 
 ```bash
-npx skills add EminBudak/reframekit
+npx skills add MakersMCP/reframekit
 ```
 
 That covers Claude Code, Codex, Cursor and the other agents the [`skills`](https://github.com/vercel-labs/skills) CLI supports. In Claude Code you can add it as a plugin instead:
 
 ```
-/plugin marketplace add EminBudak/reframekit
+/plugin marketplace add MakersMCP/reframekit
 /plugin install reframekit@reframekit
 ```
 
 In GitHub Copilot CLI it takes the same two steps:
 
 ```bash
-copilot plugin marketplace add EminBudak/reframekit
+copilot plugin marketplace add MakersMCP/reframekit
 copilot plugin install reframekit@reframekit
 ```
 
@@ -200,7 +200,7 @@ A run into a folder that holds an earlier run of the same video replaces the fil
 
 `reframekit check` measures finished files against a place's limits without changing them: shape, size, frame rate, length, file size, codecs, and whether the MP4 is whole, with its index first and no edit lists. A file that a copy or a recording cut short fails wherever the cut falls, as its boxes tell: one whose media runs past its end, or is missing after its index, though ffprobe reads the index; one cut inside its index, which ffprobe cannot read; and a fragmented one cut inside a fragment, or inside the index of its fragments that some writers put at its end. A fragmented MP4 cut exactly between two of its fragments is a whole file, only shorter, and passes. A run refuses before any work a video cut short so that media it lists is not there, in the same words, and where ffprobe still reads its index says what to do: copy or download it again, or, for a recording that stopped part way, make a whole file of the part that is there, as `ffmpeg -i rec.mp4 -c copy whole.mkv` does, and reframe that. Where the file holds none of its media, as a copy that stopped where its index ends, or not even the first frame of its picture whole, though some of its sound may be there, it says which, and only to copy or download it again: ffmpeg's copy of such a file would hold nothing to reframe. A fragmented MP4 cut only inside the index of its fragments, or in the header of the box after its last whole fragment, still has all its media: the check fails it, and a run takes it. A whole MP4 followed by bytes that make no box, as the line break or the text a broken upload can leave, passes the check with a warning, and a run takes it. That holds for a fragmented MP4 that ends with the media of its last fragment as well, unless those bytes could start the header of a next fragment, as one or two zero bytes could: they then count as a cut in that header. Given a folder reframekit made, it checks each file for its place, and a file of it that is missing, or that ffprobe cannot read or crashes on, fails its own row while the others are measured; given one MP4, the places of its shape or `--for`. With `--captions` and an ASS file it also checks that the burned in text stays inside a 9:16 place's safe area, each line's box estimated from its style and scaled to the video as libass draws it (no font is opened). It writes `CHECK.md` and `check.json` into the folder it checks, or for one MP4 into a folder of its own next to it, `reframekit-check-<name>` (`reframekit-check-<name>-2` when that one holds the check of another file of the name), and exits with 1 when a file fails. It never replaces a `CHECK.md` or `check.json` it did not write. A check stopped with Ctrl-C or a signal has written nothing yet, and says so.
 
-Loudness, black, still and silent stretches are what [launch-film](https://github.com/EminBudak/launch-film)'s `check` measures, for any video.
+Loudness, black, still and silent stretches are what [launch-film](https://github.com/MakersMCP/launch-film)'s `check` measures, for any video.
 
 ## How it works
 
@@ -234,10 +234,10 @@ Loudness, black, still and silent stretches are what [launch-film](https://githu
 
 ## See also
 
-- [launch-film](https://github.com/EminBudak/launch-film) turns a site into a short launch film, rendered on your machine, and checks any video.
-- [easyscreenshotkit](https://github.com/EminBudak/easyscreenshotkit) saves clean screenshots of a website and records a demo video of it.
-- [musicfit](https://github.com/EminBudak/musicfit) fits a music track to a video cut.
-- [easybrandkit](https://github.com/EminBudak/easybrandkit) saves a site's real logo files, colors and fonts as a brand kit.
+- [launch-film](https://github.com/MakersMCP/launch-film) turns a site into a short launch film, rendered on your machine, and checks any video.
+- [easyscreenshotkit](https://github.com/MakersMCP/easyscreenshotkit) saves clean screenshots of a website and records a demo video of it.
+- [musicfit](https://github.com/MakersMCP/musicfit) fits a music track to a video cut.
+- [easybrandkit](https://github.com/MakersMCP/easybrandkit) saves a site's real logo files, colors and fonts as a brand kit.
 
 ## License
 

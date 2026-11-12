@@ -7,8 +7,8 @@
     "name": "Emin Budak",
     "url": "https://eminbudak.com"
   },
-  "homepage": "https://github.com/EminBudak/reframekit",
-  "repository": "https://github.com/EminBudak/reframekit",
+  "homepage": "https://github.com/MakersMCP/reframekit",
+  "repository": "https://github.com/MakersMCP/reframekit",
   "license": "MIT",
   "keywords": ["video", "reframe", "crop", "vertical-video", "loudness"]
 }
